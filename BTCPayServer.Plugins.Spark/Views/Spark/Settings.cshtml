@@ -1,0 +1,132 @@
+@model SparkSettingsViewModel
+@{
+    Layout = "_Layout";
+    ViewData.SetActivePage(activePage: "Settings", category: "Spark", title: "Spark - Settings");
+}
+
+<div class="d-flex justify-content-between mb-4">
+    <h2>Spark wallet settings</h2>
+    <a asp-action="StoreOverview" asp-route-storeId="@Model.StoreId" class="btn btn-outline-secondary">Back to overview</a>
+</div>
+
+<section class="card mb-4">
+    <div class="card-header">Wallet info</div>
+    <div class="card-body">
+        <dl class="row mb-0">
+            <dt class="col-sm-3 text-secondary">Wallet id</dt>
+            <dd class="col-sm-9"><code>@Model.WalletId</code></dd>
+            <dt class="col-sm-3 text-secondary">Network</dt>
+            <dd class="col-sm-9">@Model.Network</dd>
+            <dt class="col-sm-3 text-secondary">BIP-44 account</dt>
+            <dd class="col-sm-9">@Model.Account</dd>
+            <dt class="col-sm-3 text-secondary">Spark address</dt>
+            <dd class="col-sm-9"><code class="text-break">@Model.SparkAddress</code></dd>
+            <dt class="col-sm-3 text-secondary">Identity pubkey</dt>
+            <dd class="col-sm-9"><code class="text-break">@Model.IdentityPublicKeyHex</code></dd>
+        </dl>
+    </div>
+</section>
+
+<section class="card mb-4">
+    <div class="card-header">Privacy</div>
+    <div class="card-body">
+        @if (Model.PrivacyError is not null)
+        {
+            <div class="alert alert-warning mb-3 small">
+                Could not read current privacy setting from the Signing Operators: <code>@Model.PrivacyError</code>
+            </div>
+        }
+        @if (Model.PrivacyEnabled == true)
+        {
+            <p class="mb-3">
+                <span class="badge bg-success">Private</span>
+                <span class="text-secondary ms-2">This wallet's transfers are hidden from public Spark explorers.</span>
+            </p>
+            <form asp-action="SetPrivacy" asp-route-storeId="@Model.StoreId" method="post" class="d-inline">
+                <input type="hidden" name="enabled" value="false" />
+                <button type="submit" class="btn btn-outline-warning"
+                        onclick="return confirm('Disable privacy mode? Future transfers may appear in public Spark explorers.');">
+                    Disable privacy mode
+                </button>
+            </form>
+        }
+        else if (Model.PrivacyEnabled == false)
+        {
+            <p class="mb-3">
+                <span class="badge bg-warning text-dark">Public</span>
+                <span class="text-secondary ms-2">This wallet's transfers may appear in public Spark explorers.</span>
+            </p>
+            <form asp-action="SetPrivacy" asp-route-storeId="@Model.StoreId" method="post" class="d-inline">
+                <input type="hidden" name="enabled" value="true" />
+                <button type="submit" class="btn btn-outline-primary">Enable privacy mode</button>
+            </form>
+        }
+        else
+        {
+            <p class="text-secondary mb-3">Current privacy state is unknown. Click below to ensure privacy is enabled.</p>
+            <form asp-action="SetPrivacy" asp-route-storeId="@Model.StoreId" method="post" class="d-inline">
+                <input type="hidden" name="enabled" value="true" />
+                <button type="submit" class="btn btn-outline-primary">Enable privacy mode</button>
+            </form>
+        }
+        <p class="text-secondary small mt-3 mb-0">
+            Privacy mode is enabled automatically when the wallet is first created. The flag is enforced by the Spark Signing Operators (see <code>nspark/docs/configuration.md</code>).
+        </p>
+    </div>
+</section>
+
+<section class="card mb-4">
+    <div class="card-header">Backup &amp; recovery</div>
+    <div class="card-body">
+        <p class="text-secondary mb-3">
+            Re-display the recovery mnemonic for this wallet on BTCPay's secure recovery-seed page.
+            Write it down somewhere safe before closing the page.
+        </p>
+        <form asp-action="RevealSeed" asp-route-storeId="@Model.StoreId" method="post">
+            <button type="submit" class="btn btn-outline-primary">Show recovery seed</button>
+        </form>
+    </div>
+</section>
+
+<section class="card border-danger overflow-hidden mb-4">
+    <div class="card-header bg-danger text-white">Danger zone</div>
+    <div class="card-body">
+        <p>Removing the wallet wipes <strong>all</strong> Spark state for this store:</p>
+        <ul>
+            <li>Clears the Lightning connection string (if it was using Spark)</li>
+            <li>Deletes the encrypted mnemonic and identity keys from the plugin database</li>
+            <li>Deletes every related row — Lightning invoices, on-chain deposits and withdrawals, the event cursor</li>
+        </ul>
+        <p class="mb-3">
+            After this you'll be redirected to the setup wizard. Any on-chain funds remain recoverable by re-importing the same BIP-39 mnemonic — <strong>make sure you have it backed up</strong>.
+        </p>
+        <form asp-action="RemoveWallet" asp-route-storeId="@Model.StoreId" method="post"
+              onsubmit="return confirm('Remove the Spark wallet from this store? All plugin state will be deleted. Make sure you have the recovery seed backed up.');">
+            <button type="submit" class="btn btn-outline-danger">Remove wallet</button>
+        </form>
+    </div>
+</section>
+
+@if (Model.CanManagePrivateKeys)
+{
+    <section class="card border-danger overflow-hidden">
+        <div class="card-header bg-danger text-white">Server admin: wipe plugin database</div>
+        <div class="card-body">
+            <p class="mb-2">
+                Drops the entire <code>BTCPayServer.Plugins.Spark</code> PostgreSQL schema across <strong>all stores</strong>
+                on this BTCPay instance, then lets the schema initialiser recreate it from migrations
+                on the next request.
+            </p>
+            <p class="mb-3">
+                Use this <strong>before uninstalling the plugin</strong> if you want a truly clean reinstall —
+                BTCPay's uninstall is a file-delete only and leaves the schema behind.
+                <strong>All wallets, invoices, deposits, withdrawals, and outgoing payments are deleted.</strong>
+                Any on-chain funds remain recoverable by re-importing each wallet's BIP-39 mnemonic.
+            </p>
+            <form asp-action="WipePluginData" asp-route-returnUrl="@Url.Action(nameof(BTCPayServer.Plugins.Spark.Controllers.SparkController.Settings), new { storeId = Model.StoreId })" method="post"
+                  onsubmit="return confirm('Drop the entire Spark plugin database schema for ALL stores on this instance? This cannot be undone. Confirm only if you have backed up every wallet seed.');">
+                <button type="submit" class="btn btn-danger">Wipe plugin database (all stores)</button>
+            </form>
+        </div>
+    </section>
+}

@@ -1,0 +1,13 @@
+@inject IScopeProvider ScopeProvider
+@{
+    var storeId = ScopeProvider.GetCurrentStoreId();
+    if (string.IsNullOrEmpty(storeId)) { return; }
+}
+<div class="list-group-item d-flex gap-3 align-items-center">
+    <vc:icon symbol="payment-method-lightning" />
+    <div class="flex-grow-1">
+        <div class="fw-bold">Accept Lightning with Spark</div>
+        <div class="text-secondary small">Set up a non-custodial Spark wallet to settle BTCPay invoices over Lightning instantly.</div>
+    </div>
+    <a asp-controller="Spark" asp-action="InitialSetup" asp-route-storeId="@storeId" class="btn btn-sm btn-outline-primary">Configure</a>
+</div>

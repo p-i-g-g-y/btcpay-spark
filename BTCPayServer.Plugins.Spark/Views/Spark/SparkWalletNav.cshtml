@@ -1,0 +1,76 @@
+@using BTCPayServer
+@using BTCPayServer.Abstractions.Extensions
+@using BTCPayServer.Components.MainNav
+@using BTCPayServer.Plugins.Spark.Services
+@model MainNavViewModel
+@inject SparkWalletService WalletService
+@{
+    var storeId = Model.Store?.Id;
+    if (string.IsNullOrEmpty(storeId)) { return; }
+
+    // Dot reflects whether a Spark wallet has been created for this store. Whether the BTC
+    // Lightning method is currently wired to Spark is a separate signal, shown on the overview
+    // page itself — we don't want the dot to flip back to "pending" just because the admin
+    // toggled Lightning off, or because BTCPay cleared the connection string during a plugin
+    // uninstall.
+    var walletEntity = await WalletService.GetByStoreAsync(storeId, Context.RequestAborted);
+    var walletConfigured = walletEntity is not null;
+    var statusClass = walletConfigured ? "enabled" : "pending";
+}
+
+<li class="nav-item">
+    <a asp-controller="Spark"
+       asp-action="@(walletConfigured ? "StoreOverview" : "InitialSetup")"
+       asp-route-storeId="@storeId"
+       class="nav-link @ViewData.ActiveCategoryClass("Spark")"
+       id="StoreNav-Spark">
+        <span class="me-2 btcpay-status btcpay-status--@statusClass"></span>
+        <span>Spark</span>
+    </a>
+
+    @if (ViewData.IsCategoryActive("Spark"))
+    {
+        @if (!walletConfigured)
+        {
+            <li class="nav-item nav-item-sub">
+                <a id="StoreNav-Spark-Setup"
+                   class="nav-link @ViewData.ActivePageClass("InitialSetup", "Spark")"
+                   asp-controller="Spark" asp-action="InitialSetup" asp-route-storeId="@storeId"
+                   text-translate="true">Getting started</a>
+            </li>
+        }
+        else
+        {
+            <li class="nav-item nav-item-sub">
+                <a id="StoreNav-Spark-Overview"
+                   class="nav-link @ViewData.ActivePageClass("StoreOverview", "Spark")"
+                   asp-controller="Spark" asp-action="StoreOverview" asp-route-storeId="@storeId"
+                   text-translate="true">Overview</a>
+            </li>
+            <li class="nav-item nav-item-sub">
+                <a id="StoreNav-Spark-Receive"
+                   class="nav-link @ViewData.ActivePageClass("Receive", "Spark")"
+                   asp-controller="Spark" asp-action="Receive" asp-route-storeId="@storeId"
+                   text-translate="true">Receive</a>
+            </li>
+            <li class="nav-item nav-item-sub">
+                <a id="StoreNav-Spark-Send"
+                   class="nav-link @ViewData.ActivePageClass("Send", "Spark")"
+                   asp-controller="Spark" asp-action="Send" asp-route-storeId="@storeId"
+                   text-translate="true">Send</a>
+            </li>
+            <li class="nav-item nav-item-sub">
+                <a id="StoreNav-Spark-History"
+                   class="nav-link @ViewData.ActivePageClass("History", "Spark")"
+                   asp-controller="Spark" asp-action="History" asp-route-storeId="@storeId"
+                   text-translate="true">History</a>
+            </li>
+            <li class="nav-item nav-item-sub">
+                <a id="StoreNav-Spark-Settings"
+                   class="nav-link @ViewData.ActivePageClass("Settings", "Spark")"
+                   asp-controller="Spark" asp-action="Settings" asp-route-storeId="@storeId"
+                   text-translate="true">Settings</a>
+            </li>
+        }
+    }
+</li>

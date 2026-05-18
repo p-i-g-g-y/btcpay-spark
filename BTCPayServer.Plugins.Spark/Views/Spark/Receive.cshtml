@@ -1,0 +1,421 @@
+@model SparkReceiveViewModel
+@{
+    Layout = "_Layout";
+    ViewData.SetActivePage(activePage: "Receive", category: "Spark", title: "Spark - Receive");
+
+    var hasDepositAddress = !string.IsNullOrEmpty(Model.StaticDepositAddress);
+    var hasInvoice = !string.IsNullOrEmpty(Model.GeneratedInvoice);
+    var activeTab = Model.ActiveTab ?? "lightning";
+    var statusUrl = Url.Action(nameof(BTCPayServer.Plugins.Spark.Controllers.SparkController.ReceiveStatus), new { storeId = Model.StoreId });
+}
+
+@section PageHeadContent
+{
+    @* BTCPay's stock QR styles — sets a clean white background + sensible size for the canvas
+       produced by <vc:qr-code>. *@
+    <link href="~/main/qrcode.css" rel="stylesheet" asp-append-version="true" />
+    <style>
+        .spark-receive .qr-container { display: inline-block; }
+        .spark-receive .qr-wrap {
+            display: flex;
+            justify-content: center;
+            padding: 1rem 0;
+        }
+        .spark-receive .copy-line code { word-break: break-all; }
+        .spark-receive .waiting-pulse {
+            display: inline-block;
+            width: .65rem;
+            height: .65rem;
+            border-radius: 50%;
+            background: var(--bs-info);
+            animation: sparkPulse 1.4s ease-in-out infinite;
+            margin-right: .35rem;
+            vertical-align: -1px;
+        }
+        @@keyframes sparkPulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: .35; transform: scale(.7); }
+        }
+        .spark-receive .recent-row.flash-new {
+            animation: sparkFlash 1.6s ease-out 1;
+        }
+        @@keyframes sparkFlash {
+            0% { background-color: rgba(40, 167, 69, .35); }
+            100% { background-color: transparent; }
+        }
+    </style>
+}
+
+<div class="d-flex align-items-center justify-content-between mb-4 gap-3 flex-wrap">
+    <div>
+        <h2 class="mb-1">Receive to Spark wallet</h2>
+        <p class="text-secondary mb-0 small">
+            Pick how you want to receive — instant Spark transfer, on-chain BTC funding, or a Lightning invoice.
+        </p>
+    </div>
+    <a asp-action="StoreOverview" asp-route-storeId="@Model.StoreId" class="btn btn-outline-secondary">Back to overview</a>
+</div>
+
+<section class="card spark-receive"
+         data-status-url="@statusUrl"
+         data-poll-interval-ms="4000"
+         data-generated-payment-hash="@(Model.GeneratedInvoicePaymentHash ?? "")"
+         data-generated-amount-sats="@(Model.GeneratedInvoiceAmountSats?.ToString() ?? "")"
+         data-generated-expires-at="@(Model.GeneratedInvoiceExpiresAt?.ToString("o") ?? "")">
+    <div class="card-header">
+        <ul class="nav nav-pills card-header-pills" role="tablist">
+            <li class="nav-item">
+                <a class="nav-link @(activeTab == "lightning" ? "active" : "")" data-bs-toggle="tab" href="#tab-lightning" role="tab">
+                    Lightning invoice
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link @(activeTab == "onchain" ? "active" : "")" data-bs-toggle="tab" href="#tab-onchain" role="tab">
+                    On-chain deposit
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link @(activeTab == "spark" ? "active" : "")" data-bs-toggle="tab" href="#tab-spark" role="tab">
+                    Spark address
+                </a>
+            </li>
+        </ul>
+    </div>
+
+    <div class="card-body">
+        <div class="tab-content">
+            @*  ── Spark address ── *@
+            <div class="tab-pane fade @(activeTab == "spark" ? "show active" : "")" id="tab-spark" role="tabpanel">
+                <p class="text-secondary small">
+                    Stable address for instant, off-chain Spark-to-Spark transfers. Share it with anyone using a Spark-compatible wallet.
+                </p>
+                <div class="qr-wrap">
+                    <div class="qr-container" data-clipboard="@Model.SparkAddress" title="Click to copy">
+                        <vc:qr-code data="@Model.SparkAddress" />
+                    </div>
+                </div>
+                <div class="copy-line">
+                    <label class="form-label small text-secondary mb-1">Spark address</label>
+                    <div class="input-group input-group-sm">
+                        <input type="text" class="form-control font-monospace" value="@Model.SparkAddress" readonly aria-label="Spark address" />
+                        <button class="btn btn-outline-secondary" type="button" data-clipboard="@Model.SparkAddress">Copy</button>
+                    </div>
+                </div>
+                <div class="mt-4">
+                    <div class="small text-secondary d-flex align-items-center gap-2 mb-2">
+                        <span class="waiting-pulse" aria-hidden="true"></span>
+                        <span>Watching for incoming Spark transfers…</span>
+                    </div>
+                    @* Server-side empty state; JS replaces inner HTML on each poll. *@
+                    <ul class="list-unstyled small mb-0" data-recent-list="spark">
+                        <li class="text-muted">No recent receives.</li>
+                    </ul>
+                </div>
+            </div>
+
+            @*  ── On-chain deposit address ── *@
+            <div class="tab-pane fade @(activeTab == "onchain" ? "show active" : "")" id="tab-onchain" role="tabpanel">
+                <p class="text-secondary small">
+                    Reusable Bitcoin address. Each UTXO is automatically claimed into this wallet after 3 on-chain confirmations.
+                </p>
+                @if (!hasDepositAddress)
+                {
+                    <div class="alert alert-warning">
+                        <p class="mb-2">No on-chain deposit address derived yet for this wallet.</p>
+                        <form asp-action="DeriveStaticAddress" asp-route-storeId="@Model.StoreId" method="post" class="d-inline">
+                            <button type="submit" class="btn btn-sm btn-outline-primary">Derive now</button>
+                        </form>
+                        <small class="text-muted ms-2">(auto-derived within ~60s otherwise)</small>
+                    </div>
+                }
+                else
+                {
+                    var bitcoinUri = $"bitcoin:{Model.StaticDepositAddress}";
+                    <div class="qr-wrap">
+                        <div class="qr-container" data-clipboard="@bitcoinUri" title="Click to copy">
+                            <vc:qr-code data="@bitcoinUri" />
+                        </div>
+                    </div>
+                    <div class="copy-line">
+                        <label class="form-label small text-secondary mb-1">On-chain deposit address</label>
+                        <div class="input-group input-group-sm">
+                            <input type="text" class="form-control font-monospace" value="@Model.StaticDepositAddress" readonly aria-label="On-chain deposit address" />
+                            <button class="btn btn-outline-secondary" type="button" data-clipboard="@Model.StaticDepositAddress">Copy</button>
+                        </div>
+                        <small class="text-muted d-block mt-1">
+                            Send any amount; the auto-claimer credits this wallet after 3 confirmations.
+                        </small>
+                    </div>
+                    <div class="mt-4">
+                        <div class="small text-secondary d-flex align-items-center gap-2 mb-2">
+                            <span class="waiting-pulse" aria-hidden="true"></span>
+                            <span>Watching for on-chain deposits…</span>
+                        </div>
+                        <ul class="list-unstyled small mb-0" data-recent-list="onchain">
+                            <li class="text-muted">No recent receives.</li>
+                        </ul>
+                    </div>
+                }
+            </div>
+
+            @*  ── Lightning invoice generator ── *@
+            <div class="tab-pane fade @(activeTab == "lightning" ? "show active" : "")" id="tab-lightning" role="tabpanel">
+                @if (hasInvoice)
+                {
+                    var lightningUri = $"lightning:{Model.GeneratedInvoice}";
+
+                    @* Two states: waiting (default) and success (shown when the poller flips
+                       the invoice status to Paid). Both rendered up-front; JS toggles d-none. *@
+                    <div data-invoice-state="waiting">
+                        <div class="d-flex align-items-center gap-2 small text-secondary mb-3">
+                            <span class="waiting-pulse" aria-hidden="true"></span>
+                            <span data-invoice-waiting-text>
+                                Waiting for payment — scan or send to the payer.
+                            </span>
+                            @if (Model.GeneratedInvoiceExpiresAt is { } exp)
+                            {
+                                <span class="ms-auto" title="@exp.UtcDateTime.ToString("u")">
+                                    Expires <span data-invoice-expiry>@SparkViewHelpers.RelativeTime(exp)</span>
+                                </span>
+                            }
+                        </div>
+                        <div class="qr-wrap">
+                            <div class="qr-container" data-clipboard="@Model.GeneratedInvoice" title="Click to copy">
+                                <vc:qr-code data="@lightningUri" />
+                            </div>
+                        </div>
+                        <div class="copy-line mb-3">
+                            <label class="form-label small text-secondary mb-1">BOLT11 invoice</label>
+                            <div class="input-group input-group-sm">
+                                <input type="text" class="form-control font-monospace" value="@Model.GeneratedInvoice" readonly aria-label="BOLT11 invoice" />
+                                <button class="btn btn-outline-secondary" type="button" data-clipboard="@Model.GeneratedInvoice">Copy</button>
+                            </div>
+                        </div>
+                        <dl class="row mb-3 small">
+                            <dt class="col-sm-3 text-secondary">Amount</dt>
+                            <dd class="col-sm-9">@SparkAmountConverter.FormatSats(Model.GeneratedInvoiceAmountSats ?? 0) sats</dd>
+                            <dt class="col-sm-3 text-secondary">Payment hash</dt>
+                            <dd class="col-sm-9"><code class="text-break small">@Model.GeneratedInvoicePaymentHash</code></dd>
+                        </dl>
+                        <a href="@Url.Action("Receive", new { storeId = Model.StoreId })" class="btn btn-outline-primary btn-sm">
+                            Generate another
+                        </a>
+                    </div>
+
+                    <div data-invoice-state="paid" class="d-none">
+                        <div class="alert alert-success d-flex align-items-center gap-3 mb-3">
+                            <div style="font-size:2rem; line-height:1;">✓</div>
+                            <div>
+                                <div class="fw-semibold">Payment received</div>
+                                <div class="small">
+                                    <span data-invoice-paid-amount>@SparkAmountConverter.FormatSats(Model.GeneratedInvoiceAmountSats ?? 0)</span>
+                                    sats credited to this wallet.
+                                </div>
+                            </div>
+                        </div>
+                        <dl class="row mb-3 small">
+                            <dt class="col-sm-3 text-secondary">Paid at</dt>
+                            <dd class="col-sm-9"><span data-invoice-paid-at>—</span></dd>
+                            <dt class="col-sm-3 text-secondary">Payment hash</dt>
+                            <dd class="col-sm-9"><code class="text-break small">@Model.GeneratedInvoicePaymentHash</code></dd>
+                        </dl>
+                        <div class="d-flex gap-2">
+                            <a href="@Url.Action("Receive", new { storeId = Model.StoreId })" class="btn btn-primary btn-sm">
+                                Generate another
+                            </a>
+                            <a asp-action="History" asp-route-storeId="@Model.StoreId" class="btn btn-outline-secondary btn-sm">
+                                View in history
+                            </a>
+                        </div>
+                    </div>
+
+                    <div data-invoice-state="expired" class="d-none">
+                        <div class="alert alert-warning">
+                            <strong>Invoice expired.</strong> Generate a new one if the payer still wants to send.
+                        </div>
+                        <a href="@Url.Action("Receive", new { storeId = Model.StoreId })" class="btn btn-primary btn-sm">
+                            Generate another
+                        </a>
+                    </div>
+                }
+                else
+                {
+                    <p class="text-secondary small">
+                        Generate a one-shot BOLT11 invoice. Payments arrive instantly via Spark's Service Provider; the invoice is tracked under <strong>History → Lightning invoices</strong>.
+                    </p>
+                    <div asp-validation-summary="ModelOnly" class="text-danger mb-3"></div>
+                    <form asp-action="Receive" asp-route-storeId="@Model.StoreId" method="post">
+                        <div class="row g-3">
+                            <div class="col-md-4">
+                                <label asp-for="InvoiceAmountSats" class="form-label"></label>
+                                <div class="input-group">
+                                    <input asp-for="InvoiceAmountSats" class="form-control" type="number" min="1" max="100000000" autofocus />
+                                    <span class="input-group-text">sats</span>
+                                </div>
+                                <span asp-validation-for="InvoiceAmountSats" class="text-danger small"></span>
+                            </div>
+                            <div class="col-md-4">
+                                <label asp-for="InvoiceExpiryMinutes" class="form-label"></label>
+                                <div class="input-group">
+                                    <input asp-for="InvoiceExpiryMinutes" class="form-control" type="number" min="1" max="1440" />
+                                    <span class="input-group-text">minutes</span>
+                                </div>
+                                <span asp-validation-for="InvoiceExpiryMinutes" class="text-danger small"></span>
+                            </div>
+                            <div class="col-md-4">
+                                <label asp-for="InvoiceMemo" class="form-label"></label>
+                                <input asp-for="InvoiceMemo" class="form-control" maxlength="640" />
+                                <span asp-validation-for="InvoiceMemo" class="text-danger small"></span>
+                            </div>
+                        </div>
+                        <div class="mt-3">
+                            <button type="submit" class="btn btn-primary">Generate invoice</button>
+                        </div>
+                    </form>
+                }
+            </div>
+        </div>
+    </div>
+</section>
+
+@section PageFootContent {
+    <script>
+        (function () {
+            // The Receive page polls /receive/status while open so we can:
+            //   1. Flip the Lightning tab from "Waiting" → "Paid" when someone scans the QR.
+            //   2. Live-update each tab's "Recent receives" list as Spark / on-chain
+            //      transfers land at this wallet, with a brief flash animation on the new row.
+            // Polling pauses when the document is hidden (battery + bandwidth) and stops
+            // entirely once the in-flight invoice reaches a terminal state.
+            const root = document.querySelector('.spark-receive');
+            if (!root) return;
+
+            const statusUrl = root.dataset.statusUrl;
+            const pollMs = parseInt(root.dataset.pollIntervalMs || '4000', 10);
+            const paymentHash = root.dataset.generatedPaymentHash || '';
+
+            // Click-to-copy on every [data-clipboard] inside the receive card. Replaces the
+            // inline onclick="navigator.clipboard..." we used to ship — those get blocked by
+            // BTCPay's Content Security Policy. data-clipboard is BTCPay's standard idiom.
+            root.querySelectorAll('[data-clipboard]').forEach(el => {
+                if (!el.style.cursor) el.style.cursor = 'pointer';
+                el.addEventListener('click', evt => {
+                    evt.preventDefault();
+                    const text = el.getAttribute('data-clipboard');
+                    if (text) navigator.clipboard.writeText(text);
+                });
+            });
+
+            let stopped = false;
+            const seenIds = new Set();
+
+            function rowKey(row) {
+                // Unique enough for de-dup across polls: kind + amount + ISO timestamp.
+                return `${row.kind}:${row.amountSats}:${row.at}`;
+            }
+
+            function renderRecent(channel, rows) {
+                const list = root.querySelector(`[data-recent-list="${channel}"]`);
+                if (!list) return;
+                if (!rows || rows.length === 0) {
+                    list.innerHTML = '<li class="text-muted">No recent receives.</li>';
+                    return;
+                }
+                const html = rows.map(r => {
+                    const key = rowKey(r);
+                    const isNew = !seenIds.has(key);
+                    seenIds.add(key);
+                    const relTime = relativeTime(new Date(r.at));
+                    const amount = Number(r.amountSats || 0).toLocaleString();
+                    const detail = r.detail ? `<span class="text-muted ms-2">${escapeHtml(r.detail)}</span>` : '';
+                    return `<li class="recent-row d-flex justify-content-between align-items-center py-1${isNew ? ' flash-new' : ''}">
+                                <span>
+                                    <span class="badge ${escapeAttr(r.kindBadge)}">${escapeHtml(r.kind)}</span>
+                                    <span class="fw-semibold ms-1">${amount}</span>
+                                    <span class="text-muted">sats</span>
+                                    <span class="badge ${escapeAttr(r.statusBadge)} ms-1">${escapeHtml(r.statusLabel)}</span>
+                                    ${detail}
+                                </span>
+                                <small class="text-secondary">${relTime}</small>
+                            </li>`;
+                }).join('');
+                list.innerHTML = html;
+            }
+
+            function relativeTime(d) {
+                const secs = Math.max(0, (Date.now() - d.getTime()) / 1000);
+                if (secs < 60) return 'just now';
+                if (secs < 3600) return `${Math.floor(secs / 60)}m ago`;
+                if (secs < 86400) return `${Math.floor(secs / 3600)}h ago`;
+                return `${Math.floor(secs / 86400)}d ago`;
+            }
+
+            function escapeHtml(s) {
+                return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+            }
+            function escapeAttr(s) { return escapeHtml(s).replace(/`/g, ''); }
+
+            function applyInvoiceState(state, info) {
+                root.querySelectorAll('[data-invoice-state]').forEach(el => el.classList.add('d-none'));
+                const target = root.querySelector(`[data-invoice-state="${state}"]`);
+                if (target) target.classList.remove('d-none');
+                if (state === 'paid' && info) {
+                    const at = info.paidAt ? new Date(info.paidAt).toLocaleString() : '—';
+                    const atEl = root.querySelector('[data-invoice-paid-at]');
+                    if (atEl) atEl.textContent = at;
+                }
+            }
+
+            async function pollOnce() {
+                if (stopped) return;
+                try {
+                    const url = paymentHash
+                        ? `${statusUrl}?paymentHash=${encodeURIComponent(paymentHash)}`
+                        : statusUrl;
+                    const res = await fetch(url, { credentials: 'same-origin' });
+                    if (!res.ok) return;
+                    const data = await res.json();
+
+                    if (paymentHash && data.invoice) {
+                        const s = String(data.invoice.status || '').toLowerCase();
+                        if (s === 'paid') {
+                            applyInvoiceState('paid', data.invoice);
+                            stopped = true;
+                        } else if (s === 'expired' || s === 'cancelled') {
+                            applyInvoiceState('expired', data.invoice);
+                            stopped = true;
+                        }
+                    }
+
+                    if (data.incoming) {
+                        renderRecent('lightning', data.incoming.lightning);
+                        renderRecent('spark', data.incoming.spark);
+                        renderRecent('onchain', data.incoming.onchain);
+                    }
+                } catch (e) {
+                    // Transient — try again next tick.
+                }
+            }
+
+            let timer = null;
+            function start() {
+                if (timer || stopped) return;
+                pollOnce();
+                timer = setInterval(pollOnce, pollMs);
+            }
+            function stop() {
+                if (!timer) return;
+                clearInterval(timer);
+                timer = null;
+            }
+
+            // Pause polling when the tab is hidden to avoid burning the SO call budget on
+            // a backgrounded tab. Resume + immediate poke when the tab comes back.
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) stop();
+                else start();
+            });
+            start();
+        })();
+    </script>
+}

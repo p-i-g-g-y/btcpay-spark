@@ -1,0 +1,41 @@
+@model BTCPayServer.Models.StoreViewModels.LightningNodeViewModel
+@{
+    var storeId = Model.StoreId;
+    if (Model.CryptoCode != "BTC")
+    {
+        return;
+    }
+}
+
+@* Match Arkade's pattern exactly: cloneNode the <template> into BTCPay's #CustomNodeSupport
+   accordion so a "Spark" entry appears in the "BTCPay Server currently supports" list. *@
+<script>
+    document.addEventListener("DOMContentLoaded", function () {
+        const customNodeAccordian = document.getElementById("CustomNodeSupport");
+        const template = document.getElementById("spark");
+        if (customNodeAccordian && template) {
+            customNodeAccordian.appendChild(template.content.cloneNode(true));
+        }
+    });
+</script>
+
+<template id="spark">
+    <div class="accordion-item">
+        <h2 class="accordion-header" id="CustomSparkHeader">
+            <button type="button" class="accordion-button collapsed" data-bs-toggle="collapse" data-bs-target="#CustomSparkContent" aria-controls="CustomSparkContent" aria-expanded="false">
+                <span><strong>Spark</strong> non-custodial Bitcoin L2</span>
+                <vc:icon symbol="caret-down"/>
+            </button>
+        </h2>
+        <div id="CustomSparkContent" class="accordion-collapse collapse" aria-labelledby="CustomSparkHeader" data-bs-parent="#CustomNodeSupport">
+            <div class="accordion-body">
+                <ul class="pb-2">
+                    <li>
+                        <code><b>type=</b>spark;<b>wallet-id=</b>xxx...</code>
+                    </li>
+                </ul>
+                <p class="my-2">Set up a Spark wallet for this store first, then use the "Use Spark" button above to wire it in automatically.</p>
+            </div>
+        </div>
+    </div>
+</template>

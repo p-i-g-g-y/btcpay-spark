@@ -1,0 +1,29 @@
+@model SparkActivityPage?
+@*
+    Canonical activity table rendered everywhere a list of Spark transfers appears: the
+    SO-authoritative "All" tab on History and Overview, the local Lightning / On-chain tabs
+    (via the same `SparkActivityRow` projection from SparkActivityRowFactory), and the dashboard
+    widget's compact recent-list.
+
+    Column layout (left-padded so cells don't kiss the card border):
+      [↗/↘ direction]  [kind]  [amount]  [status]  [detail line + relative time]  [action]
+*@
+@if (Model is null)
+{
+    <p class="p-3 text-secondary small mb-0">Activity feed unavailable.</p>
+    return;
+}
+@if (!string.IsNullOrEmpty(Model.Error))
+{
+    <div class="alert alert-warning m-3 small mb-0">
+        Couldn't reach the Spark Signing Operators: <code>@Model.Error</code>
+        — falling back to local feeds in the other tabs.
+    </div>
+    return;
+}
+@if (Model.Rows.Count == 0)
+{
+    <p class="p-3 text-secondary small mb-0">No activity yet.</p>
+    return;
+}
+<partial name="_SparkActivityRowsTable" model="@Model.Rows" />

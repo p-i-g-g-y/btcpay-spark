@@ -1,0 +1,108 @@
+@model IReadOnlyList<BTCPayServer.Plugins.Spark.Models.SparkActivityRow>
+@*
+    Renders a list of pre-projected activity rows as a compact, scannable table. The same
+    layout is used on every surface so all activity looks the same regardless of which feed
+    it came from (SO-authoritative / local invoices / local payments / on-chain).
+*@
+@if (Model is null || Model.Count == 0)
+{
+    @* Symmetric vertical padding so the empty-state message isn't crowded against the
+       bottom card border. `p-3` gives ~1rem on every side; `mb-0` neutralises the default
+       <p> margin so we don't get double spacing. *@
+    <p class="p-3 text-secondary small mb-0">No activity yet.</p>
+    return;
+}
+<div class="table-responsive">
+    <table class="table table-sm align-middle mb-0 spark-activity-table">
+        <thead class="visually-hidden">
+            <tr>
+                <th scope="col" class="ps-3">Direction</th>
+                <th scope="col">Kind</th>
+                <th scope="col" class="text-end">Amount</th>
+                <th scope="col">Status</th>
+                <th scope="col">Details</th>
+                <th scope="col" class="text-end pe-3">When</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var row in Model)
+            {
+                var outgoing = row.Direction == BTCPayServer.Plugins.Spark.Models.SparkActivityDirection.Outgoing;
+                var incoming = row.Direction == BTCPayServer.Plugins.Spark.Models.SparkActivityDirection.Incoming;
+                var arrow = SparkViewHelpers.DirectionArrow(outgoing, incoming);
+                var arrowClass = SparkViewHelpers.DirectionClass(outgoing, incoming);
+                var statusTitle = row.Error ?? row.StatusRaw;
+                <tr>
+                    <td class="text-center ps-3" style="width:2rem;">
+                        <span class="@arrowClass fw-bold" title="@row.Direction">@arrow</span>
+                    </td>
+                    <td>
+                        <span class="badge @row.KindBadgeClass">@row.Kind</span>
+                    </td>
+                    <td class="text-end fw-semibold text-nowrap">
+                        @if (row.AmountIsApproximate)
+                        {
+                            <span class="text-muted">~</span>
+                        }
+                        @SparkAmountConverter.FormatSats(row.AmountSats)
+                        <span class="text-secondary fw-normal small">sats</span>
+                        @if (row.FeeSats is { } fee && fee > 0)
+                        {
+                            <div class="small text-secondary fw-normal">fee @SparkAmountConverter.FormatSats(fee)</div>
+                        }
+                    </td>
+                    <td>
+                        <span class="badge @row.StatusBadgeClass @(row.Error is not null ? "border border-danger" : "")"
+                              title="@statusTitle">
+                            @row.StatusLabel
+                        </span>
+                    </td>
+                    <td class="small">
+                        @if (!string.IsNullOrEmpty(row.Detail))
+                        {
+                            if (!string.IsNullOrEmpty(row.DetailLink))
+                            {
+                                <a href="@row.DetailLink" target="_blank" rel="noreferrer" class="text-decoration-none text-secondary"
+                                   title="Open in block explorer">@row.Detail ↗</a>
+                            }
+                            else
+                            {
+                                <span class="text-secondary">@row.Detail</span>
+                            }
+                            @if (!string.IsNullOrEmpty(row.CopyText))
+                            {
+                                @* BTCPay's stock copy-to-clipboard idiom — `data-clipboard` is
+                                   picked up by the host's global handler. Avoids the inline
+                                   `onclick="navigator.clipboard..."` we used to have which the
+                                   Content Security Policy refused to execute.
+                                   `ms-2` (~0.5rem) gives breathing room from the detail text
+                                   so the icon stops crowding the txid / hash next to it. *@
+                                <button type="button"
+                                        class="btn btn-link btn-sm p-0 ms-2 text-secondary"
+                                        data-clipboard="@row.CopyText"
+                                        title="Copy">
+                                    <vc:icon symbol="actions-copy" />
+                                </button>
+                            }
+                        }
+                    </td>
+                    <td class="text-end text-secondary small text-nowrap pe-3">
+                        <span title="@row.At.UtcDateTime.ToString("u")">@SparkViewHelpers.RelativeTime(row.At)</span>
+                        @if (row.Action is not null)
+                        {
+                            <form method="post"
+                                  asp-controller="@row.Action.Controller"
+                                  asp-action="@row.Action.Action"
+                                  asp-all-route-data="row.Action.RouteValues"
+                                  class="d-inline ms-2">
+                                @Html.AntiForgeryToken()
+                                <button type="submit" class="btn btn-sm btn-outline-primary py-0 px-2"
+                                        title="@row.Action.Title">@row.Action.Label</button>
+                            </form>
+                        }
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>

@@ -1,0 +1,237 @@
+@model StoreOverviewViewModel
+@{
+    Layout = "_Layout";
+    ViewData.SetActivePage(activePage: "StoreOverview", category: "Spark", title: "Spark - Overview");
+
+    // Pre-compute the worst SSP status so we can hide the panel entirely when everything is fine.
+    var degradedServices = Model.Services.Where(s => !s.Connected).ToList();
+    var hasActivity =
+        Model.RecentInvoiceCount + Model.RecentOutgoingPaymentCount +
+        Model.RecentDepositCount + Model.RecentWithdrawalCount > 0;
+}
+
+<div class="d-flex align-items-center justify-content-between mb-4 gap-3 flex-wrap">
+    <div>
+        <h2 class="mb-1">Spark wallet</h2>
+        <div class="text-secondary small">
+            <span class="badge bg-light text-dark border me-1">@Model.Network</span>
+            @if (Model.IsLightningEnabled)
+            {
+                <span class="text-success">● Lightning configured</span>
+            }
+            else
+            {
+                <span class="text-warning">● Lightning not configured</span>
+            }
+        </div>
+    </div>
+    <div class="d-flex gap-2">
+        <a asp-action="Receive" asp-route-storeId="@Model.StoreId" class="btn btn-outline-primary">Receive</a>
+        <a asp-action="Send" asp-route-storeId="@Model.StoreId" class="btn btn-primary">Send</a>
+        <a asp-action="History" asp-route-storeId="@Model.StoreId" class="btn btn-outline-secondary">History</a>
+        <a asp-action="Settings" asp-route-storeId="@Model.StoreId" class="btn btn-outline-secondary">Settings</a>
+    </div>
+</div>
+
+@*
+    Balance hero + receive addresses. Two columns on wide screens (balance | addresses),
+    collapses to a stack on narrow.
+*@
+<section class="card mb-4">
+    <div class="card-body">
+        <div class="row g-4 align-items-start">
+            <div class="col-md-5">
+                <partial name="_SparkBalances" model="Model.Balances" />
+                @if (!Model.IsLightningEnabled)
+                {
+                    <div class="alert alert-warning small mt-3 mb-0 py-2">
+                        Lightning is not configured for this store. Open
+                        <a asp-controller="UIStores" asp-action="LightningSettings" asp-route-storeId="@Model.StoreId" asp-route-cryptoCode="BTC">Lightning settings</a>
+                        and click <strong>Use Spark</strong> to route invoices through this wallet.
+                    </div>
+                }
+            </div>
+            <div class="col-md-7">
+                <div class="mb-3">
+                    <label class="form-label small text-secondary mb-1">
+                        Spark address
+                        <span class="text-muted">— for Spark-to-Spark transfers</span>
+                    </label>
+                    <div class="input-group input-group-sm">
+                        <input type="text" class="form-control font-monospace" value="@Model.SparkAddress" readonly aria-label="Spark address" />
+                        <button class="btn btn-outline-secondary" type="button"
+                                onclick="navigator.clipboard.writeText('@Model.SparkAddress')">Copy</button>
+                    </div>
+                </div>
+
+                <div>
+                    <label class="form-label small text-secondary mb-1">
+                        On-chain deposit address
+                        <span class="text-muted">— reusable; UTXOs auto-claim after 3 confirmations</span>
+                    </label>
+                    @if (string.IsNullOrEmpty(Model.StaticDepositAddress))
+                    {
+                        <div class="d-flex align-items-center gap-2 small">
+                            <span class="text-secondary">Not derived yet.</span>
+                            <form asp-action="DeriveStaticAddress" asp-route-storeId="@Model.StoreId" method="post" class="d-inline">
+                                <button type="submit" class="btn btn-sm btn-outline-primary">Derive now</button>
+                            </form>
+                            <span class="text-muted">(auto-derives within ~60s)</span>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="input-group input-group-sm">
+                            <input type="text" class="form-control font-monospace" value="@Model.StaticDepositAddress" readonly aria-label="On-chain deposit address" />
+                            <button class="btn btn-outline-secondary" type="button"
+                                    onclick="navigator.clipboard.writeText('@Model.StaticDepositAddress')">Copy</button>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+@*
+    Service-status banner only when something is offline. Healthy SSP is silent.
+*@
+@if (degradedServices.Any())
+{
+    <div class="alert alert-warning d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <strong>Spark service degraded.</strong>
+            <span class="ms-1">@degradedServices.Count service(s) unreachable —
+                @string.Join(", ", degradedServices.Select(s => s.Name))</span>
+        </div>
+        <button class="btn btn-sm btn-link p-0" type="button" data-bs-toggle="collapse"
+                data-bs-target="#sparkServiceDetails">Details</button>
+    </div>
+    <div class="collapse mb-4" id="sparkServiceDetails">
+        <div class="card">
+            <div class="card-body">
+                @foreach (var svc in Model.Services)
+                {
+                    <div class="d-flex justify-content-between align-items-center @(svc != Model.Services.Last() ? "mb-2" : "")">
+                        <div>
+                            <strong>@svc.Name</strong>
+                            <div class="small text-secondary">@svc.Endpoint</div>
+                        </div>
+                        @if (svc.Connected)
+                        {
+                            <span class="badge bg-success">Online</span>
+                        }
+                        else
+                        {
+                            <span class="badge bg-danger" title="@svc.Error">Offline</span>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@*
+    Unified activity card. Tabs sit in the card header so the four feeds share one container
+    instead of stacking four mostly-empty cards down the right column.
+*@
+<section class="card mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <ul class="nav nav-pills card-header-pills" role="tablist">
+            <li class="nav-item">
+                @* "All" tab is the default — sourced from the SOs so it reflects ALL transfers
+                   for this wallet, not just events that ran through this plugin. *@
+                <a class="nav-link active" data-bs-toggle="tab" href="#tab-all" role="tab">
+                    All
+                    @if (Model.RecentTransfers is { Rows: { Count: > 0 } rs })
+                    {
+                        <span class="badge bg-light text-dark border ms-1">@rs.Count</span>
+                    }
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" data-bs-toggle="tab" href="#tab-invoices" role="tab">
+                    Lightning invoices
+                    @if (Model.RecentInvoiceCount > 0)
+                    {
+                        <span class="badge bg-light text-dark border ms-1">@Model.RecentInvoiceCount</span>
+                    }
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" data-bs-toggle="tab" href="#tab-payments" role="tab">
+                    Lightning payments
+                    @if (Model.RecentOutgoingPaymentCount > 0)
+                    {
+                        <span class="badge bg-light text-dark border ms-1">@Model.RecentOutgoingPaymentCount</span>
+                    }
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" data-bs-toggle="tab" href="#tab-deposits" role="tab">
+                    On-chain deposits
+                    @if (Model.RecentDepositCount > 0)
+                    {
+                        <span class="badge bg-light text-dark border ms-1">@Model.RecentDepositCount</span>
+                    }
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" data-bs-toggle="tab" href="#tab-withdrawals" role="tab">
+                    On-chain withdrawals
+                    @if (Model.RecentWithdrawalCount > 0)
+                    {
+                        <span class="badge bg-light text-dark border ms-1">@Model.RecentWithdrawalCount</span>
+                    }
+                </a>
+            </li>
+        </ul>
+        <a asp-action="History" asp-route-storeId="@Model.StoreId" class="small">View all</a>
+    </div>
+
+    <div class="tab-content">
+        <div class="tab-pane fade show active" id="tab-all" role="tabpanel">
+            <partial name="_SparkActivityRows" model="Model.RecentTransfers" />
+        </div>
+        <div class="tab-pane fade" id="tab-invoices" role="tabpanel">
+            <partial name="_SparkActivityRowsTable" model="Model.RecentInvoiceRows" />
+        </div>
+        <div class="tab-pane fade" id="tab-payments" role="tabpanel">
+            <partial name="_SparkActivityRowsTable" model="Model.RecentOutgoingPaymentRows" />
+        </div>
+        <div class="tab-pane fade" id="tab-deposits" role="tabpanel">
+            <partial name="_SparkActivityRowsTable" model="Model.RecentDepositRows" />
+        </div>
+        <div class="tab-pane fade" id="tab-withdrawals" role="tabpanel">
+            <partial name="_SparkActivityRowsTable" model="Model.RecentWithdrawalRows" />
+        </div>
+    </div>
+</section>
+
+@*
+    Identity pubkey + advanced details — collapsed by default to keep the page calm.
+*@
+<details class="text-secondary small mb-4">
+    <summary class="user-select-none">Advanced details</summary>
+    <dl class="row mb-0 mt-2">
+        <dt class="col-sm-3">Wallet ID</dt>
+        <dd class="col-sm-9"><code class="text-break">@Model.WalletId</code></dd>
+        <dt class="col-sm-3">Identity pubkey</dt>
+        <dd class="col-sm-9"><code class="text-break">@Model.IdentityPublicKeyHex</code></dd>
+        @if (Model.Services.Any(s => s.Connected))
+        {
+            <dt class="col-sm-3">Services</dt>
+            <dd class="col-sm-9">
+                @foreach (var svc in Model.Services.Where(s => s.Connected))
+                {
+                    <div>
+                        <span class="badge bg-success">●</span>
+                        <strong>@svc.Name</strong>
+                        <span class="text-muted">@svc.Endpoint</span>
+                    </div>
+                }
+            </dd>
+        }
+    </dl>
+</details>

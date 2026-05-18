@@ -1,0 +1,16 @@
+@using System
+@using BTCPayServer
+@using BTCPayServer.Abstractions.Contracts
+@using BTCPayServer.Abstractions.Extensions
+@using BTCPayServer.Abstractions.Services
+@using BTCPayServer.Client
+@using BTCPayServer.Plugins.Spark
+@using BTCPayServer.Plugins.Spark.Models
+@using BTCPayServer.Plugins.Spark.Helpers
+@using BTCPayServer.Plugins.Spark.Data.Entities
+@inject Microsoft.AspNetCore.Mvc.Localization.ViewLocalizer ViewLocalizer
+@inject Microsoft.Extensions.Localization.IStringLocalizer StringLocalizer
+@inject Safe Safe
+@addTagHelper *, Microsoft.AspNetCore.Mvc.TagHelpers
+@addTagHelper *, BTCPayServer
+@addTagHelper *, BTCPayServer.Abstractions

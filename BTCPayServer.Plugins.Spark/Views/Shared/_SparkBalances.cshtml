@@ -1,0 +1,41 @@
+@model SparkBalancesViewModel
+@*
+    Single primary balance (Available) rendered in BTCPay's standard `h3 + text-secondary` style.
+    Secondary numbers (Locked/Incoming) appear only when non-zero, so a freshly-funded wallet shows
+    one line and a wallet mid-transfer shows the relevant detail without clutter.
+*@
+@if (Model is null)
+{
+    <p class="text-secondary mb-0">No balance available.</p>
+}
+else
+{
+    var lockedSats = Math.Max(0, Model.OwnedSats - Model.AvailableSats);
+    <div class="balance">
+        <div class="d-flex align-items-baseline gap-2 flex-wrap">
+            <h3 class="d-inline-block mb-0">@SparkAmountConverter.FormatSats(Model.AvailableSats)</h3>
+            <span class="text-secondary fw-semibold text-nowrap">sats available</span>
+        </div>
+        <div class="text-secondary small mt-1">@SparkAmountConverter.FormatBtc(Model.AvailableSats) BTC</div>
+
+        @if (lockedSats > 0 || Model.IncomingSats > 0)
+        {
+            <div class="d-flex flex-wrap gap-3 mt-3 small">
+                @if (lockedSats > 0)
+                {
+                    <span class="text-secondary"
+                          title="Sats currently locked in pending transfers; will become available once those finalize.">
+                        <span class="fw-semibold">@SparkAmountConverter.FormatSats(lockedSats)</span> locked
+                    </span>
+                }
+                @if (Model.IncomingSats > 0)
+                {
+                    <span class="text-secondary"
+                          title="Sats inbound from unsettled Spark or Lightning transfers.">
+                        <span class="fw-semibold">@SparkAmountConverter.FormatSats(Model.IncomingSats)</span> incoming
+                    </span>
+                }
+            </div>
+        }
+    </div>
+}

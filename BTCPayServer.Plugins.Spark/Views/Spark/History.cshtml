@@ -1,0 +1,139 @@
+@model SparkHistoryViewModel
+@inject IScopeProvider ScopeProvider
+@{
+    Layout = "_Layout";
+    ViewData.SetActivePage(activePage: "History", category: "Spark", title: "Spark - History");
+    var storeId = ScopeProvider.GetCurrentStoreId();
+
+    var transfers = Model.Transfers;
+    var pageTake = transfers?.Take ?? 25;
+    var pageOffset = transfers?.Offset ?? 0;
+    var nextOffset = transfers?.NextOffset;
+    var hasPrev = pageOffset > 0;
+}
+
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <div>
+        <h2 class="mb-1">Spark activity</h2>
+        <p class="text-secondary small mb-0">All wallet activity, grouped by source.</p>
+    </div>
+    <a asp-action="StoreOverview" asp-route-storeId="@storeId" class="btn btn-outline-secondary">Back to overview</a>
+</div>
+
+<section class="card">
+    <div class="card-header">
+        <ul class="nav nav-pills card-header-pills" role="tablist">
+            <li class="nav-item">
+                <a class="nav-link active" data-bs-toggle="tab" href="#all" role="tab">
+                    All
+                    @if (transfers is { Rows: { Count: > 0 } rs })
+                    {
+                        <span class="badge bg-light text-dark border ms-1">@rs.Count</span>
+                    }
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" data-bs-toggle="tab" href="#invoices" role="tab">
+                    Lightning invoices
+                    @if (Model.InvoiceCount > 0)
+                    {
+                        <span class="badge bg-light text-dark border ms-1">@Model.InvoiceCount</span>
+                    }
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" data-bs-toggle="tab" href="#payments" role="tab">
+                    Lightning payments
+                    @if (Model.OutgoingPaymentCount > 0)
+                    {
+                        <span class="badge bg-light text-dark border ms-1">@Model.OutgoingPaymentCount</span>
+                    }
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" data-bs-toggle="tab" href="#deposits" role="tab">
+                    On-chain deposits
+                    @if (Model.DepositCount > 0)
+                    {
+                        <span class="badge bg-light text-dark border ms-1">@Model.DepositCount</span>
+                    }
+                </a>
+            </li>
+            <li class="nav-item">
+                <a class="nav-link" data-bs-toggle="tab" href="#withdrawals" role="tab">
+                    On-chain withdrawals
+                    @if (Model.WithdrawalCount > 0)
+                    {
+                        <span class="badge bg-light text-dark border ms-1">@Model.WithdrawalCount</span>
+                    }
+                </a>
+            </li>
+        </ul>
+    </div>
+
+    <div class="tab-content">
+        @* ─ All (SO-authoritative) ─ *@
+        <div class="tab-pane fade show active" id="all" role="tabpanel">
+            <div class="p-3 d-flex justify-content-between align-items-center flex-wrap gap-2 border-bottom">
+                <div class="small text-secondary">
+                    Live feed from the Spark Signing Operators.
+                    @if (pageOffset > 0 || nextOffset is not null)
+                    {
+                        <span class="ms-1">Showing @pageOffset–@(pageOffset + (transfers?.Rows.Count ?? 0))</span>
+                    }
+                </div>
+                <form method="get" asp-action="History" asp-route-storeId="@Model.StoreId" class="d-flex gap-2 align-items-center small mb-0">
+                    <input type="hidden" name="offset" value="@pageOffset" />
+                    <input type="hidden" name="take" value="@pageTake" />
+                    @{
+                        var checkedAttr = Model.ShowInternalSwaps ? "checked" : null;
+                    }
+                    <label class="form-check form-check-inline mb-0">
+                        <input class="form-check-input" type="checkbox" name="showInternal" value="true"
+                               checked="@checkedAttr" onchange="this.form.submit()" />
+                        <span class="form-check-label">Show leaf swaps</span>
+                    </label>
+                </form>
+            </div>
+            <partial name="_SparkActivityRows" model="Model.Transfers" />
+            @if (hasPrev || nextOffset is not null)
+            {
+                <div class="p-3 d-flex justify-content-between border-top">
+                    @if (hasPrev)
+                    {
+                        var prev = Math.Max(0, pageOffset - pageTake);
+                        <a asp-action="History" asp-route-storeId="@Model.StoreId"
+                           asp-route-offset="@prev" asp-route-take="@pageTake"
+                           asp-route-showInternal="@(Model.ShowInternalSwaps ? "true" : null)"
+                           class="btn btn-sm btn-outline-secondary">← Previous</a>
+                    }
+                    else
+                    {
+                        <span></span>
+                    }
+                    @if (nextOffset is { } next)
+                    {
+                        <a asp-action="History" asp-route-storeId="@Model.StoreId"
+                           asp-route-offset="@next" asp-route-take="@pageTake"
+                           asp-route-showInternal="@(Model.ShowInternalSwaps ? "true" : null)"
+                           class="btn btn-sm btn-outline-secondary">Next →</a>
+                    }
+                </div>
+            }
+        </div>
+
+        @* ─ Local feeds (same row layout, plugin-side bookkeeping) ─ *@
+        <div class="tab-pane fade" id="invoices" role="tabpanel">
+            <partial name="_SparkActivityRowsTable" model="Model.InvoiceRows" />
+        </div>
+        <div class="tab-pane fade" id="payments" role="tabpanel">
+            <partial name="_SparkActivityRowsTable" model="Model.OutgoingPaymentRows" />
+        </div>
+        <div class="tab-pane fade" id="deposits" role="tabpanel">
+            <partial name="_SparkActivityRowsTable" model="Model.DepositRows" />
+        </div>
+        <div class="tab-pane fade" id="withdrawals" role="tabpanel">
+            <partial name="_SparkActivityRowsTable" model="Model.WithdrawalRows" />
+        </div>
+    </div>
+</section>

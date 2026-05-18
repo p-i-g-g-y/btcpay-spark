@@ -1,0 +1,407 @@
+@model SparkSendViewModel
+@inject IScopeProvider ScopeProvider
+@{
+    Layout = "_Layout";
+    ViewData.SetActivePage(activePage: "Send", category: "Spark", title: "Spark - Send");
+    var storeId = ScopeProvider.GetCurrentStoreId();
+
+    string KindLabel(SparkSendKind k) => k switch
+    {
+        SparkSendKind.Bolt11 => "Lightning invoice",
+        SparkSendKind.LightningAddress => "Lightning address",
+        SparkSendKind.SparkAddress => "Spark transfer",
+        SparkSendKind.OnChain => "On-chain Bitcoin",
+        _ => "Send",
+    };
+    string KindIcon(SparkSendKind k) => k switch
+    {
+        SparkSendKind.Bolt11 or SparkSendKind.LightningAddress => "⚡",
+        SparkSendKind.SparkAddress => "✦",
+        SparkSendKind.OnChain => "₿",
+        _ => "→",
+    };
+    string KindHelp(SparkSendKind k) => k switch
+    {
+        SparkSendKind.Bolt11 => "Pay a BOLT11 invoice via the Spark Service Provider.",
+        SparkSendKind.LightningAddress => "Resolve a Lightning address (LNURL-pay) and pay the resulting invoice.",
+        SparkSendKind.SparkAddress => "Instant, free Spark-to-Spark transfer to another Spark wallet.",
+        SparkSendKind.OnChain => "Cooperative exit to a regular Bitcoin address.",
+        _ => "",
+    };
+}
+
+<div class="d-flex align-items-center justify-content-between mb-4 gap-3 flex-wrap">
+    <div>
+        <h2 class="mb-1">Send from the Spark wallet</h2>
+        <p class="text-secondary mb-0 small">
+            Pay a Lightning invoice or address, transfer to another Spark wallet, or withdraw on-chain.
+        </p>
+    </div>
+    <a asp-action="StoreOverview" asp-route-storeId="@storeId" class="btn btn-outline-secondary">Back to overview</a>
+</div>
+
+@*
+    Visual progress indicator. BOLT11 with a fixed amount skips the middle step, so the dots
+    stay in sync with the actual flow the user is in.
+*@
+@{
+    var isLockedBolt11 = Model.Kind == SparkSendKind.Bolt11 && Model.AmountLocked;
+}
+<ol class="d-flex align-items-center gap-3 mb-4 list-unstyled small text-secondary">
+    <li class="d-flex align-items-center gap-2">
+        <span class="badge rounded-pill @(Model.Step >= SparkSendStep.Destination ? "bg-primary" : "bg-secondary")">1</span>
+        Destination
+    </li>
+    @if (!isLockedBolt11)
+    {
+        <li>›</li>
+        <li class="d-flex align-items-center gap-2">
+            <span class="badge rounded-pill @(Model.Step >= SparkSendStep.Amount ? "bg-primary" : "bg-secondary")">2</span>
+            Amount
+        </li>
+    }
+    <li>›</li>
+    <li class="d-flex align-items-center gap-2">
+        <span class="badge rounded-pill @(Model.Step >= SparkSendStep.Confirm ? "bg-primary" : "bg-secondary")">@(isLockedBolt11 ? 2 : 3)</span>
+        Confirm
+    </li>
+    <li>›</li>
+    <li class="d-flex align-items-center gap-2">
+        <span class="badge rounded-pill @(Model.Step == SparkSendStep.Done ? "bg-success" : "bg-secondary")">@(isLockedBolt11 ? 3 : 4)</span>
+        Done
+    </li>
+</ol>
+
+@if (Model.Step != SparkSendStep.Done)
+{
+    <div asp-validation-summary="ModelOnly" class="alert alert-danger" style="display:@(ViewData.ModelState.ErrorCount > 0 ? "block" : "none")"></div>
+}
+
+@* Step 1 — Destination =================================================== *@
+@if (Model.Step == SparkSendStep.Destination)
+{
+    <form asp-action="Send" asp-route-storeId="@storeId" method="post" class="card" autocomplete="off">
+        @Html.AntiForgeryToken()
+        <div class="card-body">
+            <div class="mb-3">
+                <label asp-for="Destination" class="form-label fw-semibold">Where are you sending?</label>
+                <input asp-for="Destination" class="form-control form-control-lg font-monospace"
+                       placeholder="lnbc… · name@@domain · spark1… · bc1q…"
+                       autofocus required />
+                <div class="form-text">
+                    Auto-detects: <strong>BOLT11 invoice</strong>, <strong>Lightning address</strong>
+                    (<code>name@@domain</code>), <strong>Spark address</strong> (instant, free), or
+                    <strong>on-chain Bitcoin address</strong> (cooperative exit).
+                </div>
+                <span asp-validation-for="Destination" class="text-danger small"></span>
+            </div>
+        </div>
+        <div class="card-footer d-flex justify-content-between">
+            <a asp-action="StoreOverview" asp-route-storeId="@storeId" class="btn btn-outline-secondary">Cancel</a>
+            <button type="submit" name="command" value="parse" class="btn btn-primary">Continue →</button>
+        </div>
+    </form>
+}
+
+@* Step 2 — Amount ======================================================== *@
+@*
+    Both buttons (forward "quote" and back "back") submit the same form. The action is decided
+    by the clicked button's `name=command` pair — DO NOT also set `command` via a hidden input,
+    or the browser will send both values, the framework will bind the first (= "quote"), and
+    the back button will silently trigger the wrong action.
+*@
+@if (Model.Step == SparkSendStep.Amount)
+{
+    <form asp-action="Send" asp-route-storeId="@storeId" method="post" class="card" autocomplete="off">
+        @Html.AntiForgeryToken()
+        <input type="hidden" asp-for="Destination" />
+        <input type="hidden" asp-for="Kind" />
+        <input type="hidden" asp-for="Memo" />
+        <input type="hidden" asp-for="AmountLocked" />
+        <div class="card-body">
+            <div class="mb-3 p-3 bg-light rounded d-flex justify-content-between align-items-center gap-3 flex-wrap">
+                <div class="d-flex align-items-center gap-2 flex-wrap text-break">
+                    <span class="badge bg-primary" style="font-size:1rem;">@KindIcon(Model.Kind)</span>
+                    <div>
+                        <div class="small text-secondary">@KindLabel(Model.Kind)</div>
+                        <code class="text-break">@Model.Destination</code>
+                        @if (!string.IsNullOrEmpty(Model.Memo))
+                        {
+                            <div class="small text-secondary mt-1">Memo: <em>@Model.Memo</em></div>
+                        }
+                    </div>
+                </div>
+                <button type="submit" formaction="@Url.Action("Send", new { storeId })" name="command" value="back" class="btn btn-sm btn-outline-secondary" formnovalidate>Change</button>
+            </div>
+
+            <div class="mb-3">
+                <label asp-for="AmountSats" class="form-label fw-semibold">Amount to send</label>
+                <div class="input-group input-group-lg">
+                    <input asp-for="AmountSats" class="form-control" type="number" min="1"
+                           data-amount-input
+                           required="@(Model.Kind != SparkSendKind.OnChain || !Model.SwipeAll)"
+                           disabled="@(Model.Kind == SparkSendKind.OnChain && Model.SwipeAll)"
+                           autofocus />
+                    <span class="input-group-text">sats</span>
+                </div>
+                <div class="form-text">@KindHelp(Model.Kind)</div>
+                <span asp-validation-for="AmountSats" class="text-danger small"></span>
+
+                @* Swipe-all toggle: on-chain only — Lightning / Spark transfers have no
+                   "withdraw all" semantics in the SSP. When checked the amount input is
+                   disabled and the quote step computes everything from the wallet balance. *@
+                @if (Model.Kind == SparkSendKind.OnChain)
+                {
+                    <div class="form-check mt-2">
+                        @{
+                            var swipeChecked = Model.SwipeAll ? "checked" : null;
+                        }
+                        <input class="form-check-input" type="checkbox"
+                               id="SwipeAllCheckbox" name="SwipeAll" value="true"
+                               checked="@swipeChecked"
+                               data-swipe-all-checkbox />
+                        <label class="form-check-label small" for="SwipeAllCheckbox">
+                            <strong>Send all available</strong>
+                            <span class="text-secondary">— empty the wallet to this address; the fee is deducted from the balance.</span>
+                        </label>
+                    </div>
+                }
+            </div>
+
+            @if (Model.Kind == SparkSendKind.Bolt11 || Model.Kind == SparkSendKind.LightningAddress)
+            {
+                <div class="mb-3">
+                    <label asp-for="MaxFeeSats" class="form-label">Max routing fee (optional)</label>
+                    <div class="input-group">
+                        <input asp-for="MaxFeeSats" class="form-control" type="number" min="0" placeholder="auto" />
+                        <span class="input-group-text">sats</span>
+                    </div>
+                    <div class="form-text">Cap the SSP routing fee. Leave blank to accept the quoted fee on the next step.</div>
+                </div>
+            }
+        </div>
+        <div class="card-footer d-flex justify-content-between">
+            <button type="submit" name="command" value="back" class="btn btn-outline-secondary" formnovalidate>← Back</button>
+            <button type="submit" name="command" value="quote" class="btn btn-primary">Review →</button>
+        </div>
+    </form>
+}
+
+@* Step 3 — Confirm ======================================================= *@
+@if (Model.Step == SparkSendStep.Confirm)
+{
+    var amount = Model.AmountSats ?? 0;
+    var fee = Model.FeeEstimateSats;
+    // In swipe-all mode the total debit equals the wallet balance — the recipient's amount
+    // is `balance − fee`, so we don't sum amount+fee. Outside swipe-all, total is amount+fee.
+    long? total;
+    if (Model.SwipeAll && Model.AvailableSats is { } sweepAvail)
+    {
+        total = sweepAvail;
+    }
+    else
+    {
+        total = fee is null ? (long?)null : amount + fee.Value;
+    }
+    var insufficient = Model.AvailableSats is { } avail && total is { } t && t > avail;
+
+    @*
+        CRITICAL: do NOT set <input type="hidden" name="command" value="confirm" /> here.
+        Both the back button ("Change") and the primary action ("Send") are submit buttons on
+        the same form. A hidden `command` would be sent alongside the clicked button's value,
+        and ASP.NET Core's [FromForm] binder would take the first one — so "Change" would
+        silently trigger the actual send. Always carry the command via the buttons only.
+    *@
+    <form asp-action="Send" asp-route-storeId="@storeId" method="post" class="card border-primary" autocomplete="off">
+        @Html.AntiForgeryToken()
+        <input type="hidden" asp-for="Destination" />
+        <input type="hidden" asp-for="Kind" />
+        <input type="hidden" asp-for="AmountSats" />
+        <input type="hidden" asp-for="AmountLocked" />
+        <input type="hidden" asp-for="MaxFeeSats" />
+        <input type="hidden" asp-for="FeeEstimateSats" />
+        <input type="hidden" asp-for="Memo" />
+        <input type="hidden" asp-for="AvailableSats" />
+        <input type="hidden" asp-for="ResolvedBolt11" />
+        <input type="hidden" asp-for="SwipeAll" />
+
+        <div class="card-header bg-primary text-white d-flex align-items-center gap-2">
+            <span style="font-size:1.2rem;">@KindIcon(Model.Kind)</span>
+            <strong>Review @KindLabel(Model.Kind)</strong>
+        </div>
+
+        <div class="card-body">
+            <dl class="row mb-0 align-items-baseline">
+                <dt class="col-sm-3 text-secondary">Destination</dt>
+                <dd class="col-sm-9"><code class="text-break">@Model.Destination</code></dd>
+
+                @if (!string.IsNullOrEmpty(Model.Memo))
+                {
+                    <dt class="col-sm-3 text-secondary mt-2">Memo</dt>
+                    <dd class="col-sm-9 mt-2"><em>@Model.Memo</em></dd>
+                }
+
+                <dt class="col-sm-3 text-secondary mt-3">Amount</dt>
+                <dd class="col-sm-9 mt-3">
+                    <span class="h4 mb-0">@SparkAmountConverter.FormatSats(amount)</span>
+                    <span class="text-secondary ms-1">sats</span>
+                    <span class="text-secondary small ms-2">@SparkAmountConverter.FormatBtc(amount) BTC</span>
+                    @if (Model.SwipeAll)
+                    {
+                        <span class="badge bg-warning text-dark ms-2" title="Wallet will be emptied">Sweeping wallet</span>
+                        <div class="small text-secondary mt-1">
+                            What the recipient receives. The fee is taken out of the wallet's balance, not added on top.
+                        </div>
+                    }
+                </dd>
+
+                <dt class="col-sm-3 text-secondary mt-3">Network fee</dt>
+                <dd class="col-sm-9 mt-3">
+                    @if (fee is { } feeSats)
+                    {
+                        if (feeSats == 0)
+                        {
+                            <span class="text-success fw-semibold">Free</span>
+                            <span class="text-secondary small ms-2">Spark-to-Spark transfers are instant and free.</span>
+                        }
+                        else
+                        {
+                            <span class="fw-semibold">@SparkAmountConverter.FormatSats(feeSats) sats</span>
+                            @if (Model.Kind == SparkSendKind.OnChain)
+                            {
+                                <span class="text-secondary small ms-2">Includes SSP + L1 broadcast fee.</span>
+                            }
+                            else if (Model.Kind == SparkSendKind.Bolt11 || Model.Kind == SparkSendKind.LightningAddress)
+                            {
+                                <span class="text-secondary small ms-2">Estimated by the Spark Service Provider for this invoice.</span>
+                            }
+                        }
+                    }
+                    else
+                    {
+                        <span class="text-secondary">Will be quoted at send time</span>
+                    }
+                    @if (Model.MaxFeeSats is { } maxFee && (Model.Kind == SparkSendKind.Bolt11 || Model.Kind == SparkSendKind.LightningAddress))
+                    {
+                        <div class="small text-secondary mt-1">Max fee allowed: <strong>@SparkAmountConverter.FormatSats(maxFee)</strong> sats</div>
+                    }
+                </dd>
+
+                @if (total is { } tot)
+                {
+                    <dt class="col-sm-3 text-secondary mt-3">Total</dt>
+                    <dd class="col-sm-9 mt-3">
+                        <span class="h5 mb-0">@SparkAmountConverter.FormatSats(tot)</span>
+                        <span class="text-secondary ms-1">sats</span>
+                    </dd>
+                }
+
+                @if (Model.AvailableSats is { } a)
+                {
+                    <dt class="col-sm-3 text-secondary mt-3">Wallet balance</dt>
+                    <dd class="col-sm-9 mt-3">
+                        <span>@SparkAmountConverter.FormatSats(a) sats</span>
+                        <span class="text-secondary small ms-2">available</span>
+                    </dd>
+                }
+            </dl>
+
+            @if (insufficient)
+            {
+                <div class="alert alert-danger mt-4 mb-0">
+                    <strong>Insufficient balance.</strong> Send total exceeds available balance.
+                </div>
+            }
+            else
+            {
+                <div class="alert alert-warning small mt-4 mb-0">
+                    <strong>Final confirmation.</strong>
+                    Clicking <em>Send</em> will broadcast immediately. This cannot be undone.
+                </div>
+            }
+        </div>
+
+        @{
+            // The big confirm button shows what's about to be debited from the wallet, so it
+            // matches the wallet-balance impact the user is committing to. That's `amount + fee`
+            // for kinds where the fee is added on top (Lightning, on-chain), and just `amount`
+            // for Spark transfers (free) or when we couldn't get a fee quote. Falling back to
+            // `amount` keeps the button useful even when the quote step failed.
+            var buttonSats = total ?? amount;
+        }
+        <div class="card-footer d-flex justify-content-between">
+            <button type="submit" name="command" value="back" class="btn btn-outline-secondary" formnovalidate>← Change</button>
+            <button type="submit" name="command" value="confirm" class="btn btn-primary btn-lg" disabled="@(insufficient ? "disabled" : null)">
+                Send @SparkAmountConverter.FormatSats(buttonSats) sats
+            </button>
+        </div>
+    </form>
+}
+
+@* Step 4 — Done ========================================================= *@
+@if (Model.Step == SparkSendStep.Done && Model.Result is not null)
+{
+    var r = Model.Result;
+    <section class="card border-success">
+        <div class="card-header bg-success text-white d-flex align-items-center gap-2">
+            <span style="font-size:1.2rem;">✓</span>
+            <strong>@KindLabel(r.Kind) sent</strong>
+        </div>
+        <div class="card-body">
+            <dl class="row mb-0">
+                <dt class="col-sm-3 text-secondary">Destination</dt>
+                <dd class="col-sm-9"><code class="text-break">@r.Destination</code></dd>
+
+                <dt class="col-sm-3 text-secondary mt-2">Amount</dt>
+                <dd class="col-sm-9 mt-2">@SparkAmountConverter.FormatSats(r.AmountSats) sats</dd>
+
+                @if (r.FeeSats is { } feeSats)
+                {
+                    <dt class="col-sm-3 text-secondary mt-2">Fee</dt>
+                    <dd class="col-sm-9 mt-2">@(feeSats == 0 ? "Free" : $"{SparkAmountConverter.FormatSats(feeSats)} sats")</dd>
+                }
+
+                @if (!string.IsNullOrEmpty(r.TxId))
+                {
+                    <dt class="col-sm-3 text-secondary mt-2">L1 txid</dt>
+                    <dd class="col-sm-9 mt-2"><code class="text-break">@r.TxId</code></dd>
+                }
+                @if (!string.IsNullOrEmpty(r.SspRequestId))
+                {
+                    <dt class="col-sm-3 text-secondary mt-2">SSP request id</dt>
+                    <dd class="col-sm-9 mt-2"><code class="text-break">@r.SspRequestId</code></dd>
+                }
+                @if (!string.IsNullOrEmpty(r.SparkTransferId))
+                {
+                    <dt class="col-sm-3 text-secondary mt-2">Transfer id</dt>
+                    <dd class="col-sm-9 mt-2"><code class="text-break">@r.SparkTransferId</code></dd>
+                }
+            </dl>
+        </div>
+        <div class="card-footer d-flex justify-content-between gap-2">
+            <a asp-action="History" asp-route-storeId="@storeId" class="btn btn-outline-secondary">View in history</a>
+            <a asp-action="Send" asp-route-storeId="@storeId" class="btn btn-primary">Send another</a>
+        </div>
+    </section>
+}
+
+@section PageFootContent {
+    <script>
+        // Step 2 (Amount) — when on-chain and "Send all available" is checked, disable the
+        // amount input. The server already ignores it in that mode, but disabling it makes the
+        // intent visually obvious and prevents the browser's `required` validation from blocking
+        // submit when the field is empty.
+        (function () {
+            const cb = document.querySelector('[data-swipe-all-checkbox]');
+            const amount = document.querySelector('[data-amount-input]');
+            if (!cb || !amount) return;
+            function sync() {
+                amount.disabled = cb.checked;
+                amount.required = !cb.checked;
+                if (cb.checked) amount.value = '';
+            }
+            cb.addEventListener('change', sync);
+            sync();
+        })();
+    </script>
+}

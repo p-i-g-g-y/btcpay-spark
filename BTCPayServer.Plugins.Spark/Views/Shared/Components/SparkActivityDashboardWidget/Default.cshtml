@@ -1,0 +1,7 @@
+@model SparkActivityDashboardWidgetViewModel
+@*
+    Deliberately empty: activity now lives inside the primary SparkDashboardWidget so the store
+    dashboard isn't littered with two Spark cards. The component is kept (rather than removed
+    from SparkPlugin.cs) to avoid touching the UI-extension registration and any persisted
+    dashboard layouts that already reference the slot. Render nothing.
+*@

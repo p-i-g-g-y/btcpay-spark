@@ -1,0 +1,43 @@
+@using BTCPayServer.Models.StoreViewModels
+@model BTCPayServer.Models.StoreViewModels.LightningNodeViewModel
+
+@{
+    var storeId = Model.StoreId;
+    var url = Url.Action("EnableLightning", "Spark", new
+    {
+        storeId,
+        ConfigureLN = true
+    });
+    var isSelected = Model.LightningNodeType is LightningNodeType.Custom
+                     && Model.ConnectionString?.StartsWith("type=spark", StringComparison.InvariantCultureIgnoreCase) is true;
+}
+
+
+<input asp-for="LightningNodeType" value="LightningNodeType-Spark" type="radio" id="LightningNodeType-Spark" data-bs-toggle="pill"
+       data-bs-target="#CustomSetup" role="tab" aria-controls="SparkSetup"
+       aria-selected="@(isSelected ? "true" : "false")"
+       onclick="location.href='@url'"
+       class="@(Model.LightningNodeType == LightningNodeType.Custom ? "active" : "")">
+<label asp-for="LightningNodeType" for="@($"LightningNodeType-Spark")" text-translate="true">Use Spark</label>
+
+
+@{
+    <script>
+    const triggerSparkEl = document.getElementById('LightningNodeType-Spark')
+
+
+    if (@(isSelected ? "true" : "false")) {
+
+        // deactivate currently active tab and activate this tab
+        const activeSparkEl = document.querySelector('input[name="LightningNodeType"]:checked')
+        if (activeSparkEl) {
+            activeSparkEl.removeAttribute('checked')
+            activeSparkEl.setAttribute('aria-selected', 'false')
+            document.querySelector('#LightningNodeTypeTabs .tab-pane.active').classList.remove('active', 'show')
+            triggerSparkEl.setAttribute('checked', 'checked')
+            triggerSparkEl.setAttribute('aria-selected', 'true')
+
+        }
+    }
+</script>
+}

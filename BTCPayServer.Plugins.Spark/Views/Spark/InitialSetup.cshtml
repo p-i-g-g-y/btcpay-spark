@@ -1,0 +1,68 @@
+@model InitialWalletSetupViewModel
+@inject IScopeProvider ScopeProvider
+@{
+    Layout = "_LayoutWizard";
+    ViewData.SetActivePage(activePage: "InitialSetup", category: "Spark", title: "Spark - Getting Started");
+    var storeId = ScopeProvider.GetCurrentStoreId();
+    var hasError = !ViewData.ModelState.IsValid;
+    var hasMnemonic = !string.IsNullOrEmpty(Model.Mnemonic);
+}
+
+<header class="text-center">
+    <h1>Set up your Spark wallet</h1>
+    <p class="lead text-secondary mt-3">A non-custodial Spark wallet bound to this store. Used as the Lightning backend for BTCPay invoices and for on-chain funding/withdrawals.</p>
+</header>
+
+<div class="mt-5">
+    <h3 class="my-4">I have a seed</h3>
+    <div class="list-group">
+        <a href="#" class="list-group-item list-group-item-action" data-bs-toggle="collapse" data-bs-target="#importExisting">
+            <div class="content">
+                <h4>Import an existing 12 or 24-word BIP-39 mnemonic</h4>
+                <p class="mb-0 text-secondary">The mnemonic is encrypted at rest with BTCPay's data-protection key.</p>
+            </div>
+        </a>
+    </div>
+    <div id="importExisting" class="collapse mt-3 @(hasError && hasMnemonic ? "show" : "")">
+        <div class="card">
+            <div class="card-body">
+                <form asp-action="InitialSetup" method="post" asp-route-storeId="@storeId">
+                    <div class="form-group mb-3">
+                        <label asp-for="Mnemonic" class="form-label">BIP-39 mnemonic</label>
+                        <textarea asp-for="Mnemonic" class="form-control" rows="3" placeholder="word1 word2 word3 ..."></textarea>
+                        <span asp-validation-for="Mnemonic" class="text-danger"></span>
+                    </div>
+                    <div class="form-group mb-3">
+                        <label asp-for="Passphrase" class="form-label">Passphrase (optional)</label>
+                        <input asp-for="Passphrase" class="form-control" type="password" autocomplete="off" />
+                        <div class="form-text">Encrypted with the mnemonic. Leave empty if you don't use a BIP-39 passphrase.</div>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Import wallet</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="mt-5">
+    <h3 class="my-4">Generate a new wallet</h3>
+    <div class="list-group">
+        <a href="#" class="list-group-item list-group-item-action" data-bs-toggle="collapse" data-bs-target="#createNew">
+            <div class="content">
+                <h4>Create a fresh 12-word seed</h4>
+                <p class="mb-0 text-secondary">You will be shown the seed once for backup. The plugin stores it encrypted.</p>
+            </div>
+        </a>
+    </div>
+    <div id="createNew" class="collapse mt-3 @(hasError && !hasMnemonic ? "show" : "")">
+        <div class="card">
+            <div class="card-body">
+                <form asp-action="InitialSetup" method="post" asp-route-storeId="@storeId">
+                    <input type="hidden" asp-for="Mnemonic" value="" />
+                    <div class="alert alert-info">A new 12-word BIP-39 mnemonic will be generated and shown to you on the next page. Back it up immediately.</div>
+                    <button type="submit" class="btn btn-primary">Generate wallet</button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
