@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.1.0-alpha.1] - 2026-05-18
 
 ### Added
 - Initial plugin scaffold targeting BTCPay v2.3.9 (`net10.0`): solution, `BTCPayServer.Plugins.Spark` project, `SparkPluginDbContext` with entities for wallets, Lightning invoices, static-deposit UTXOs, on-chain wallet withdrawals, and event cursors.

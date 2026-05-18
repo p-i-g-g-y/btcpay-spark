@@ -7,7 +7,7 @@
 
         <Product>Spark - Beta</Product>
         <Description>Accept Bitcoin Lightning payments non-custodially through Spark.</Description>
-        <Version>0.1.0</Version>
+        <Version>0.1.0-alpha.1</Version>
         <EmbedUntrackedSources>true</EmbedUntrackedSources>
         <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
         <GenerateRuntimeConfigDevFile>true</GenerateRuntimeConfigDevFile>
