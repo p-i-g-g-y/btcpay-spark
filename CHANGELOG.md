@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.1.0-alpha.2] - 2026-05-18
+
+### Added
+- GitHub Actions workflow (`.github/workflows/release.yml`) that builds `BTCPayServer.Plugins.Spark.btcpay` and attaches it to the GitHub release automatically when a release is published.
+
 ## [0.1.0-alpha.1] - 2026-05-18
 
 ### Added

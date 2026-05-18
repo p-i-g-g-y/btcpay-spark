@@ -1,0 +1,54 @@
+name: Release artifact
+
+# Builds BTCPayServer.Plugins.Spark.btcpay and attaches it to the GitHub release
+# whenever a release is published (or re-published) on GitHub. Also runnable
+# manually against any tag via the Actions tab.
+on:
+  release:
+    types: [published, edited]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build and attach the artifact to (e.g. v0.1.0-alpha.1)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve tag
+        id: tag
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            echo "ref=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ref=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout (with submodules)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.tag.outputs.ref }}
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup .NET (from global.json)
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Build .btcpay artifact
+        run: ./build.sh
+
+      - name: Upload artifact to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.ref }}
+        run: |
+          # --clobber replaces any existing asset with the same name (idempotent reruns).
+          gh release upload "$TAG" \
+            artifacts/BTCPayServer.Plugins.Spark.btcpay \
+            --clobber
