@@ -344,22 +344,37 @@ public class SparkLightningClient(
             {
                 if (IsTerminalSuccess(status.Status))
                 {
-                    await outgoingPayments.MarkSucceededAsync(entityId, status.Preimage, status.FeeSats, DateTimeOffset.UtcNow, cancellation);
-                    logger.LogInformation(
-                        "Spark Lightning send settled inside Pay() (wallet={WalletId}, sspRequestId={SspRequestId}, status={Status})",
-                        walletId, sspRequestId, status.Status);
-                    return new PayResponse
+                    // SECURITY: validate the SSP-reported preimage against the BOLT11's payment
+                    // hash before accepting "Succeeded" as terminal. A malicious / buggy SSP
+                    // returning junk would otherwise lock the row Succeeded with no real proof
+                    // of payment. If validation fails, stay in the poll loop — the SSP might
+                    // return a correct preimage on a later tick, or the bg poller will reconcile.
+                    var paymentHashHex = pr.PaymentHash?.ToString();
+                    if (!SparkOutgoingPaymentPoller.IsValidPreimage(status.Preimage, paymentHashHex))
                     {
-                        Result = PayResult.Ok,
-                        Details = new PayDetails
+                        logger.LogError(
+                            "Spark Lightning send reported {Status} inside Pay() but preimage does not match payment hash (wallet={WalletId}, sspRequestId={SspRequestId}). Will keep polling.",
+                            status.Status, walletId, sspRequestId);
+                    }
+                    else
+                    {
+                        await outgoingPayments.MarkSucceededAsync(entityId, status.Preimage, status.FeeSats, DateTimeOffset.UtcNow, cancellation);
+                        logger.LogInformation(
+                            "Spark Lightning send settled inside Pay() (wallet={WalletId}, sspRequestId={SspRequestId}, status={Status})",
+                            walletId, sspRequestId, status.Status);
+                        return new PayResponse
                         {
-                            PaymentHash = pr.PaymentHash,
-                            Preimage = string.IsNullOrEmpty(status.Preimage) ? null : uint256.Parse(status.Preimage),
-                            Status = LightningPaymentStatus.Complete,
-                            TotalAmount = amountSats is { } a3 ? LightMoney.Satoshis(a3) : null,
-                            FeeAmount = status.FeeSats is { } f ? LightMoney.Satoshis(f) : null,
-                        },
-                    };
+                            Result = PayResult.Ok,
+                            Details = new PayDetails
+                            {
+                                PaymentHash = pr.PaymentHash,
+                                Preimage = uint256.Parse(status.Preimage!),
+                                Status = LightningPaymentStatus.Complete,
+                                TotalAmount = amountSats is { } a3 ? LightMoney.Satoshis(a3) : null,
+                                FeeAmount = status.FeeSats is { } f ? LightMoney.Satoshis(f) : null,
+                            },
+                        };
+                    }
                 }
 
                 if (IsTerminalFailure(status.Status))

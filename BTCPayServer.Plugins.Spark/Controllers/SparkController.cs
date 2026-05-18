@@ -81,6 +81,7 @@ public class SparkController(
     }
 
     [HttpPost("stores/{storeId}/initial-setup")]
+    [ValidateAntiForgeryToken]
     [Authorize(Policy = Policies.CanModifyStoreSettings, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
     public async Task<IActionResult> InitialSetup(string storeId, InitialWalletSetupViewModel model, CancellationToken ct)
     {
@@ -286,6 +287,7 @@ public class SparkController(
     // -----------------------------------------------------------------------
 
     [HttpPost("stores/{storeId}/derive-static-address")]
+    [ValidateAntiForgeryToken]
     [Authorize(Policy = Policies.CanModifyStoreSettings, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
     public async Task<IActionResult> DeriveStaticAddress(string storeId, CancellationToken ct)
     {
@@ -316,6 +318,7 @@ public class SparkController(
     /// <see cref="SparkWalletDepositStatus.Failed"/>.
     /// </summary>
     [HttpPost("stores/{storeId}/deposits/{depositId}/retry")]
+    [ValidateAntiForgeryToken]
     [Authorize(Policy = Policies.CanModifyStoreSettings, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
     public async Task<IActionResult> RetryDeposit(string storeId, string depositId, CancellationToken ct)
     {
@@ -729,6 +732,28 @@ public class SparkController(
                 model.Step = SparkSendStep.Done;
                 return View(model);
             }
+            catch (NSpark.Exceptions.SparkConnectionException scx)
+                when (scx.GrpcStatusCode == Grpc.Core.StatusCode.AlreadyExists)
+            {
+                // The Spark coordinator rejected this send before it left the wallet — it's still
+                // finalising a prior transfer that consumed (or is consuming) the same leaves. The
+                // Lightning invoice was NOT paid by this attempt.
+                //
+                // We MUST NOT leave the user on the Confirm step here. Re-clicking Send would hit
+                // EnsurePendingAsync's idempotency dedup (same WalletId + PaymentHash) and return
+                // the row that PayLightningInvoiceAsync just failed against — which has no
+                // SspRequestId — and the wizard would render the Done step with an empty request
+                // id, looking like success. Abandon the wizard entirely and force the user to
+                // start a fresh Send flow (re-paste the destination, re-enter the amount) once
+                // the coordinator releases the leaves.
+                logger.LogWarning(scx,
+                    "Spark Send wizard hit AlreadyExists (wallet={WalletId}, kind={Kind}) — abandoning the wizard.",
+                    entity!.Id, model.Kind);
+                TempData[WellKnownTempData.ErrorMessage] =
+                    "Spark coordinator is still finalising a previous transfer from this wallet — the leaves needed for this send are not yet released. " +
+                    "The Lightning invoice was NOT paid. Wait a few seconds and start a new Send flow.";
+                return RedirectToAction(nameof(Send), new { storeId });
+            }
             catch (Exception ex)
             {
                 logger.LogWarning(ex, "Spark send failed (wallet={WalletId}, kind={Kind})", entity!.Id, model.Kind);
@@ -1053,9 +1078,28 @@ public class SparkController(
 
         if (!inserted)
         {
-            // Idempotency hit — the wizard form was re-submitted (double-click, browser refresh)
-            // for the same BOLT11. Don't re-send to the SSP; return whatever request id we have.
-            return row.SspRequestId ?? string.Empty;
+            // Idempotency hit — the (WalletId, PaymentHash) pair has been seen before. This
+            // happens on three legitimate paths and one trap:
+            //   * legit: the wizard form was double-submitted (rapid double-click) — the prior
+            //            call is still in flight with a real SspRequestId. Return it.
+            //   * legit: a prior call already succeeded — Status=Succeeded with a real
+            //            SspRequestId. Return it.
+            //   * legit: BTCPay's Lightning payout pipeline already started this send via
+            //            SparkLightningClient.Pay. Same thing — return its SspRequestId.
+            //   * TRAP : a prior call hit AlreadyExists pre-submission and the row has no
+            //            SspRequestId (we marked it Failed in our catch below). Blindly
+            //            returning row.SspRequestId ?? "" used to make the wizard render the
+            //            Done step with an empty request id, which the user reads as success.
+            //            Refuse — surface as AlreadyExists so the wizard's confirm handler
+            //            redirects the user to a fresh Send flow.
+            if (!string.IsNullOrEmpty(row.SspRequestId))
+                return row.SspRequestId;
+            throw new NSpark.Exceptions.SparkConnectionException(
+                "wallet.send.dedup",
+                "A previous Send attempt for this exact invoice never reached the Spark coordinator. Start a new Send flow.")
+            {
+                GrpcStatusCode = Grpc.Core.StatusCode.AlreadyExists,
+            };
         }
 
         try
@@ -1070,27 +1114,21 @@ public class SparkController(
         catch (NSpark.Exceptions.SparkConnectionException scx)
             when (scx.GrpcStatusCode == Grpc.Core.StatusCode.AlreadyExists)
         {
-            // The coordinator's "transfer X is already completed" error does NOT mean the
-            // Lightning payment settled. "Transfer" here is the coordinator's internal
-            // leaf-consuming state machine — `completed` means "I have already finalised that
-            // server-side state for these leaves in a prior call". The actual Lightning HTLC
-            // could be:
-            //   * still routing,
-            //   * stuck in LIGHTNING_PAYMENT_INITIATED,
-            //   * already paid,
-            //   * returned to the sender (USER_SWAP_RETURNED).
-            // We cannot tell from this error alone, and we MUST NOT claim success. Surface this
-            // to the user as "the send is in flight, check Recent activity for the real status"
-            // — the SO-authoritative All tab on History/Overview will show the truth within
-            // seconds. The row stays Pending without an SspRequestId; the background poller
-            // can't reconcile it from here, but the user has a clear way to verify by hand.
+            // Coordinator rejected the submission before the send left the wallet — it still
+            // holds the wallet's leaves from a prior in-flight transfer. The Lightning HTLC was
+            // NOT initiated from this attempt. Mark the row Failed so it can't masquerade as a
+            // successful idempotency hit on the next click (without this, EnsurePendingAsync
+            // would return the same row with no SspRequestId and the wizard would render Done
+            // with empty data, looking like success). Then rethrow the original
+            // SparkConnectionException — the Send wizard's confirm handler catches it
+            // specifically and abandons the wizard.
             logger.LogWarning(
-                "Spark Lightning send hit AlreadyExists — coordinator already has state for these leaves; the Lightning payment status is unknown (wallet={WalletId}, hash={Hash}, msg={Msg})",
+                "Spark Lightning send hit AlreadyExists — coordinator already has state for these leaves; the Lightning payment was NOT initiated (wallet={WalletId}, hash={Hash}, msg={Msg})",
                 entity.Id, paymentHash, scx.Message);
-            throw new InvalidOperationException(
-                "A prior send attempt for these wallet leaves is still being finalised by the Spark coordinator. " +
-                "Wait a few seconds and check the Recent activity ▸ All tab — your previous attempt may have already paid this invoice. " +
-                "If the invoice is still unpaid after the leaves free up, retry.");
+            await outgoingPayments.MarkFailedAsync(row.Id,
+                $"Coordinator rejected with AlreadyExists: {scx.Message}",
+                DateTimeOffset.UtcNow, ct);
+            throw;
         }
         catch (Exception ex)
         {
@@ -1204,6 +1242,7 @@ public class SparkController(
     }
 
     [HttpPost("stores/{storeId}/settings/privacy")]
+    [ValidateAntiForgeryToken]
     [Authorize(Policy = Policies.CanModifyStoreSettings, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
     public async Task<IActionResult> SetPrivacy(string storeId, bool enabled, CancellationToken ct)
     {
@@ -1235,6 +1274,7 @@ public class SparkController(
     /// <c>ShowPrivateKey</c>: any user who can modify the store can reveal its seed.
     /// </summary>
     [HttpPost("stores/{storeId}/settings/reveal-seed")]
+    [ValidateAntiForgeryToken]
     [Authorize(Policy = Policies.CanModifyStoreSettings, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
     public async Task<IActionResult> RevealSeed(string storeId, CancellationToken ct)
     {
@@ -1268,6 +1308,7 @@ public class SparkController(
     /// store owner can reset their own state without admin help — same as Arkade.
     /// </summary>
     [HttpPost("stores/{storeId}/settings/remove")]
+    [ValidateAntiForgeryToken]
     [Authorize(Policy = Policies.CanModifyStoreSettings, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
     public async Task<IActionResult> RemoveWallet(string storeId, CancellationToken ct)
     {
@@ -1295,48 +1336,6 @@ public class SparkController(
         return RedirectToAction(nameof(InitialSetup), new { storeId });
     }
 
-    /// <summary>
-    /// Server-admin-only nuke button. Drops the entire <c>"BTCPayServer.Plugins.Spark"</c>
-    /// PostgreSQL schema. Use BEFORE uninstalling the plugin if you want a truly clean slate —
-    /// BTCPay's uninstall is a pure file-delete with no callback, so without this every reinstall
-    /// would just resume against the leftover tables. After the drop, the schema initializer
-    /// will recreate everything from migrations on the next request that touches the DB.
-    /// </summary>
-    [HttpPost("server/wipe-plugin-data")]
-    [Authorize(Policy = Policies.CanModifyServerSettings, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
-    public async Task<IActionResult> WipePluginData(string? returnUrl, CancellationToken ct)
-    {
-        await using var dbctx = await dbContextFactory.CreateDbContextAsync(ct);
-        var conn = dbctx.Database.GetDbConnection();
-        var weOpened = conn.State == System.Data.ConnectionState.Closed;
-        if (weOpened) await conn.OpenAsync(ct);
-        try
-        {
-            await using var cmd = conn.CreateCommand();
-            cmd.CommandText = $"DROP SCHEMA IF EXISTS \"{Data.SparkPluginDbContext.SchemaName}\" CASCADE";
-            await cmd.ExecuteNonQueryAsync(ct);
-
-            // Also drop the EF migrations-history row(s) for our plugin so the next boot creates
-            // them from scratch. The history table lives in BTCPay's main schema and is named
-            // after our plugin schema (see BaseDbContextFactory).
-            await using var dropHistory = conn.CreateCommand();
-            dropHistory.CommandText = $"DROP TABLE IF EXISTS \"{Data.SparkPluginDbContext.SchemaName}\"";
-            await dropHistory.ExecuteNonQueryAsync(ct);
-        }
-        finally
-        {
-            if (weOpened) await conn.CloseAsync();
-        }
-
-        logger.LogWarning("Spark plugin data wiped (schema dropped) by admin.");
-        TempData[WellKnownTempData.SuccessMessage] =
-            "Spark plugin schema dropped. Restart BTCPay or revisit the plugin to recreate the tables.";
-
-        if (!string.IsNullOrEmpty(returnUrl) && Url.IsLocalUrl(returnUrl))
-            return Redirect(returnUrl);
-        return RedirectToAction(nameof(InitialSetup), new { storeId = HttpContext.GetStoreData()?.Id ?? "" });
-    }
-
     // -----------------------------------------------------------------------
     // Enable / disable Lightning (used by the "Use Spark" tab on the LN setup page)
     // -----------------------------------------------------------------------
@@ -1348,8 +1347,12 @@ public class SparkController(
     /// accepted because the tab-head pill navigates via <c>location.href</c> (GET) while form
     /// submissions elsewhere would POST.
     /// </summary>
-    [HttpGet("stores/{storeId}/enable-ln")]
+    // POST-only — this endpoint changes the store's Lightning routing. Accepting GET was a CSRF
+    // risk: a cross-origin <img src=…enable-ln> from a logged-in admin's browser would silently
+    // hijack the store's payment method. The "Use Spark" pill in SparkLNSetupTabhead.cshtml now
+    // submits a hidden form instead of using location.href.
     [HttpPost("stores/{storeId}/enable-ln")]
+    [ValidateAntiForgeryToken]
     [Authorize(Policy = Policies.CanModifyStoreSettings, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
     public async Task<IActionResult> EnableLightning(string storeId, CancellationToken ct)
     {
@@ -1391,8 +1394,9 @@ public class SparkController(
         return RedirectToAction(nameof(StoreOverview), new { storeId });
     }
 
-    [HttpGet("stores/{storeId}/disable-ln")]
+    // POST-only — same CSRF rationale as EnableLightning above.
     [HttpPost("stores/{storeId}/disable-ln")]
+    [ValidateAntiForgeryToken]
     [Authorize(Policy = Policies.CanModifyStoreSettings, AuthenticationSchemes = AuthenticationSchemes.Cookie)]
     public async Task<IActionResult> DisableLightning(string storeId, CancellationToken ct)
     {

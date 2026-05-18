@@ -107,26 +107,3 @@
     </div>
 </section>
 
-@if (Model.CanManagePrivateKeys)
-{
-    <section class="card border-danger overflow-hidden">
-        <div class="card-header bg-danger text-white">Server admin: wipe plugin database</div>
-        <div class="card-body">
-            <p class="mb-2">
-                Drops the entire <code>BTCPayServer.Plugins.Spark</code> PostgreSQL schema across <strong>all stores</strong>
-                on this BTCPay instance, then lets the schema initialiser recreate it from migrations
-                on the next request.
-            </p>
-            <p class="mb-3">
-                Use this <strong>before uninstalling the plugin</strong> if you want a truly clean reinstall —
-                BTCPay's uninstall is a file-delete only and leaves the schema behind.
-                <strong>All wallets, invoices, deposits, withdrawals, and outgoing payments are deleted.</strong>
-                Any on-chain funds remain recoverable by re-importing each wallet's BIP-39 mnemonic.
-            </p>
-            <form asp-action="WipePluginData" asp-route-returnUrl="@Url.Action(nameof(BTCPayServer.Plugins.Spark.Controllers.SparkController.Settings), new { storeId = Model.StoreId })" method="post"
-                  onsubmit="return confirm('Drop the entire Spark plugin database schema for ALL stores on this instance? This cannot be undone. Confirm only if you have backed up every wallet seed.');">
-                <button type="submit" class="btn btn-danger">Wipe plugin database (all stores)</button>
-            </form>
-        </div>
-    </section>
-}

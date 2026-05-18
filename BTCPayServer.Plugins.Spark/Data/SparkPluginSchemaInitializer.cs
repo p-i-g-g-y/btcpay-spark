@@ -17,9 +17,7 @@ namespace BTCPayServer.Plugins.Spark.Data;
 ///
 /// <list type="number">
 ///   <item>Checks if the <c>BTCPayServer.Plugins.Spark</c> schema exists.</item>
-///   <item>If yes — no-op. The plugin assumes the schema matches the current model. Schema
-///         shape changes during dev are handled via <see cref="Controllers.SparkController.WipePluginData"/>
-///         (server-admin Danger zone) which drops the schema for a clean recreate on next boot.</item>
+///   <item>If yes — no-op. The plugin assumes the schema matches the current model.</item>
 ///   <item>If no — generates the CREATE script from the live EF model
 ///         (<c>Database.GenerateCreateScript()</c>) and runs it once. This is identical to what
 ///         an EF migration would emit, just constructed at runtime from the model snapshot.</item>
@@ -27,8 +25,9 @@ namespace BTCPayServer.Plugins.Spark.Data;
 ///
 /// <para>
 /// When the plugin reaches a public release we'll re-add a real EF migration pipeline so installed
-/// users get incremental schema upgrades on each plugin update. Until then: install fresh, or wipe
-/// and reinstall to pick up shape changes.
+/// users get incremental schema upgrades on each plugin update. Until then schema-shape changes
+/// during dev require dropping the <c>BTCPayServer.Plugins.Spark</c> schema by hand
+/// (<c>DROP SCHEMA "BTCPayServer.Plugins.Spark" CASCADE;</c> in psql) before reinstalling.
 /// </para>
 /// </summary>
 public class SparkPluginSchemaInitializer(

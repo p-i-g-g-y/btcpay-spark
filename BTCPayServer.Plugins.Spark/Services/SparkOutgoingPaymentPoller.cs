@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using BTCPayServer.Plugins.Spark.Configuration;
 using BTCPayServer.Plugins.Spark.Data.Entities;
 using Microsoft.Extensions.Hosting;
@@ -117,11 +118,29 @@ public class SparkOutgoingPaymentPoller(
 
                 if (SuccessStatuses.Contains(status.Status))
                 {
+                    // SECURITY: the SSP's preimage is the cryptographic receipt of payment. We
+                    // MUST verify SHA256(preimage) == paymentHash before treating it as proof,
+                    // otherwise a malicious or buggy SSP could report "Succeeded" with junk
+                    // and we'd permanently mark the row as paid with no real settlement.
+                    if (!IsValidPreimage(status.Preimage, p.PaymentHash))
+                    {
+                        logger.LogError(
+                            "Spark Lightning send reported {Status} but preimage does not match payment hash (wallet={Wallet}, hash={Hash}, sspRequest={Request}). Refusing to mark Succeeded.",
+                            status.Status, p.WalletId, p.PaymentHash, p.SspRequestId);
+                        // Don't mark Failed either — the SSP says it settled, just not provably.
+                        // Leave Pending so the next poll can re-check; if the SSP eventually
+                        // returns a correct preimage we'll accept it then.
+                        continue;
+                    }
                     if (await outgoingPayments.MarkSucceededAsync(p.Id, status.Preimage, status.FeeSats, now, ct))
                     {
+                        // SECURITY: do NOT log the full preimage. It is the proof-of-payment the
+                        // payer would present in a dispute; in logs (file/syslog/aggregator) it
+                        // can be lifted by anyone with read access. Log a short hash prefix so
+                        // operators can correlate without exposing the secret.
                         logger.LogInformation(
-                            "Spark Lightning send succeeded (wallet={Wallet}, hash={Hash}, sspRequest={Request}, fee={Fee}, preimage={Preimage})",
-                            p.WalletId, p.PaymentHash, p.SspRequestId, status.FeeSats, status.Preimage);
+                            "Spark Lightning send succeeded (wallet={Wallet}, hash={Hash}, sspRequest={Request}, fee={Fee}, preimage={PreimagePrefix}…)",
+                            p.WalletId, p.PaymentHash, p.SspRequestId, status.FeeSats, PreimagePrefix(status.Preimage));
                     }
                     continue;
                 }
@@ -171,5 +190,53 @@ public class SparkOutgoingPaymentPoller(
         var baseMs = opts.InvoicePollerTick.TotalMilliseconds * 3;
         var ms = baseMs * Math.Pow(2, attempt - opts.InvoiceFastPollAttempts);
         return TimeSpan.FromMilliseconds(Math.Min(opts.InvoiceMaxBackoff.TotalMilliseconds, ms));
+    }
+
+    /// <summary>
+    /// Returns true iff the supplied preimage is 32 bytes of hex AND
+    /// <c>SHA256(preimage) == paymentHash</c>. Defends against a malicious or buggy SSP
+    /// reporting "Succeeded" with junk preimage (which would forfeit our dispute-resolution
+    /// evidence chain). Comparison is case-insensitive and time-constant.
+    /// </summary>
+    internal static bool IsValidPreimage(string? preimageHex, string? paymentHashHex)
+    {
+        if (string.IsNullOrEmpty(preimageHex) || string.IsNullOrEmpty(paymentHashHex))
+            return false;
+        if (preimageHex.Length != 64 || paymentHashHex.Length != 64)
+            return false;
+        byte[] preimageBytes;
+        byte[] expectedHashBytes;
+        try
+        {
+            preimageBytes = Convert.FromHexString(preimageHex);
+            expectedHashBytes = Convert.FromHexString(paymentHashHex);
+        }
+        catch (FormatException)
+        {
+            return false;
+        }
+        var computed = System.Security.Cryptography.SHA256.HashData(preimageBytes);
+        return CryptographicOperations.FixedTimeEquals(computed, expectedHashBytes);
+    }
+
+    /// <summary>
+    /// Returns the first 8 hex chars of SHA256(preimage), suitable for log correlation without
+    /// disclosing the preimage itself. Falls back to an empty string when the preimage is missing
+    /// or malformed.
+    /// </summary>
+    private static string PreimagePrefix(string? preimageHex)
+    {
+        if (string.IsNullOrEmpty(preimageHex))
+            return "";
+        try
+        {
+            var preimageBytes = Convert.FromHexString(preimageHex);
+            var hash = System.Security.Cryptography.SHA256.HashData(preimageBytes);
+            return Convert.ToHexString(hash, 0, 4).ToLowerInvariant();
+        }
+        catch
+        {
+            return "";
+        }
     }
 }
